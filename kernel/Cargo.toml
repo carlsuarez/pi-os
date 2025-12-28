@@ -1,0 +1,13 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+drivers = { path = "../drivers" }
+common = { path = "../common" }
+
+[[bin]]
+name = "kernel"
+path = "src/main.rs"
+test = false

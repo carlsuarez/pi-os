@@ -1,0 +1,12 @@
+# Build artifacts
+build/
+*.elf
+*.o
+*.bin
+*.img
+
+# Rust/Cargo
+target/
+
+# Editor
+.vscode/

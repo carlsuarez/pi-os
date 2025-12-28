@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = ["kernel", "drivers", "common"]
+
+[profile.dev]
+debug = true
+split-debuginfo = 'unpacked'
+
+[profile.release]
+debug = true
+split-debuginfo = 'unpacked'
