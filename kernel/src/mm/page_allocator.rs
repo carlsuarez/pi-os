@@ -9,16 +9,14 @@ use core::{
 /// Global storage for the buddy allocator, wrapped in a spinlock for
 /// safe concurrent access.
 static mut BUDDY_STORAGE: MaybeUninit<SpinLock<BuddyAllocator>> = MaybeUninit::uninit();
-static BUDDY_TAKEN: AtomicBool = AtomicBool::new(false);
+static BUDDY_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// High-level interface for allocating pages, page blocks, and page tables.
 ///
 /// `PageAllocator` wraps a `BuddyAllocator` stored in `BUDDY_STORAGE`.
 /// Provides RAII-style wrappers for allocated memory to ensure proper
 /// deallocation when values go out of scope.
-pub struct PageAllocator {
-    inner: NonNull<SpinLock<BuddyAllocator>>,
-}
+pub struct PageAllocator;
 
 impl PageAllocator {
     /// Initializes the global buddy allocator.
@@ -33,53 +31,64 @@ impl PageAllocator {
     ///
     /// # Panics
     /// Panics if called more than once.
-    pub unsafe fn init(start: usize, end: usize) -> Self {
-        unsafe {
-            if BUDDY_TAKEN.swap(true, Ordering::AcqRel) {
-                panic!("PageAllocator initialized twice");
-            }
+    pub unsafe fn init(start: usize, end: usize) {
+        if BUDDY_INITIALIZED.swap(true, Ordering::AcqRel) {
+            panic!("PageAllocator initialized twice");
+        }
 
+        unsafe {
             let mut alloc = BuddyAllocator::new();
             alloc.init(start, end);
 
             let storage_ptr = core::ptr::addr_of_mut!(BUDDY_STORAGE);
             (*storage_ptr).write(SpinLock::new(alloc));
+        }
+    }
 
-            let inner = NonNull::new_unchecked((*storage_ptr).as_mut_ptr());
-            Self { inner }
+    /// Returns a reference to the global page allocator instance.
+    ///
+    /// # Panics
+    /// Panics if the allocator has not been initialized.
+    pub fn get() -> Self {
+        if !BUDDY_INITIALIZED.load(Ordering::Acquire) {
+            panic!("PageAllocator not initialized");
+        }
+        Self
+    }
+
+    /// Accesses the buddy allocator with a lock guard.
+    fn with_allocator<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut BuddyAllocator) -> R,
+    {
+        unsafe {
+            // SAFETY: We've verified initialization via BUDDY_INITIALIZED,
+            // and SpinLock ensures exclusive access to the allocator.
+            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
+            let alloc = &*(*storage_ptr).as_ptr();
+            let mut guard = alloc.lock();
+            f(&mut *guard)
         }
     }
 
     /// Allocates a single page.
-    pub fn alloc_page(&mut self) -> Option<Page> {
-        unsafe {
-            let mut guard = self.inner.as_ref().lock();
-            guard.alloc_page().map(Page::new)
-        }
+    pub fn alloc_page(&self) -> Option<Page> {
+        self.with_allocator(|alloc| unsafe { alloc.alloc_page() }.map(Page::new))
     }
 
     /// Allocates a block of pages of size `2^ORDER`.
-    pub fn alloc_block<const ORDER: usize>(&mut self) -> Option<PageBlock<ORDER>> {
-        unsafe {
-            let mut guard = self.inner.as_ref().lock();
-            guard.alloc_pages(ORDER).map(PageBlock::new)
-        }
+    pub fn alloc_block<const ORDER: usize>(&self) -> Option<PageBlock<ORDER>> {
+        self.with_allocator(|alloc| unsafe { alloc.alloc_pages(ORDER) }.map(PageBlock::new))
     }
 
     /// Allocates an L1 page table (8 KiB, order = 2).
-    pub fn alloc_l1_table(&mut self) -> Option<L1Table> {
-        unsafe {
-            let mut guard = self.inner.as_ref().lock();
-            guard.alloc_pages(2).map(L1Table::new)
-        }
+    pub fn alloc_l1_table(&self) -> Option<L1Table> {
+        self.with_allocator(|alloc| unsafe { alloc.alloc_pages(2) }.map(L1Table::new))
     }
 
     /// Allocates an L2 page table (single page).
-    pub fn alloc_l2_table(&mut self) -> Option<L2Table> {
-        unsafe {
-            let mut guard = self.inner.as_ref().lock();
-            guard.alloc_page().map(L2Table::new)
-        }
+    pub fn alloc_l2_table(&self) -> Option<L2Table> {
+        self.with_allocator(|alloc| unsafe { alloc.alloc_page() }.map(L2Table::new))
     }
 }
 
