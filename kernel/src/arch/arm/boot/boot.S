@@ -1,38 +1,16 @@
 /* ================================================== */
 /* Page Table & Boot                                  */
 /* ================================================== */
-
     .syntax unified
     .arm
     .file 1 "kernel/src/arch/arm/boot/boot.S"
 
-/* L1 Page Table (16 KB) */
-    .section .l1pagetable, "aw", %nobits   @ Allocated in memory, not in ELF
+/* L1 Page Table for Kernel (16 KB) */
+    .section .l1pagetable, "aw", %nobits
     .align 14                              @ 16 KB alignment
     .global l1_page_table
 l1_page_table:
     .space 16384                           @ Reserve 16 KB
-
-/* Coarse Page Tables (1 MB) */
-    .section .coarsepagetables_space, "aw", %nobits
-    .align 10                              @ 1 KB alignment
-    .global coarse_page_tables
-coarse_page_tables:
-    .space 0x100000                        
-
-/* L1 Page Table Space (2 MB) */
-    .section .l1pagetables_space, "aw", %nobits
-    .align 14
-    .global l1_page_tables_space
-l1_page_tables_space:
-    .space 0x200000
-
-/* Free Pages (4 MB) */
-    .section .freepages, "aw", %nobits
-    .align 12                              @ 4 KB alignment
-    .global free_pages
-free_pages:
-    .space 0x400000
 
 /* Boot Entry Point */
     .section .text
@@ -40,8 +18,7 @@ free_pages:
     .type _start, %function
 _start:
     .cfi_startproc
-    .loc 1 25 0                            @ Line in source file for debug
-
+    .loc 1 21 0
     cpsid if                                @ Disable IRQ/FIQ interrupts
 
     /* Copy vector table from 0x8000 to 0x0 */
@@ -77,10 +54,8 @@ zero_bss:
     /* Initialize stacks for IRQ, SVC, System modes */
     cps #0x12                    @ IRQ mode
     ldr sp, =_irq_stack_top
-
     cps #0x13                    @ Supervisor mode
     ldr sp, =_svc_stack_top
-
     cps #0x1F                    @ System mode (kernel)
     ldr sp, =_kernel_stack_top
 
@@ -91,10 +66,10 @@ zero_bss:
     mov r0, #0x40000000
     vmsr fpexc, r0
 
-    /* Initialize page table */
-    bl init_page_table
+    /* Initialize kernel's L1 page table */
+    bl init_kernel_page_table
 
-    /* Initialize MMU */
+    /* Initialize MMU with kernel page table */
     bl enable_mmu
 
     /* Jump to Rust kernel_main */
@@ -111,6 +86,7 @@ halt:
     .type enable_mmu, %function
 enable_mmu:
     .cfi_startproc
+    .loc 1 89 0
     mov r1, #0
     mcr p15, 0, r1, c8, c7, 0          @ Invalidate TLB
     
@@ -121,10 +97,6 @@ enable_mmu:
     mcr p15, 0, r1, c2, c0, 2          @ TTBCR = 0
     
     @ Domain Access Control: Manager access for domains 0-2
-    @ Domain 0 (kernel): 0b11 = Manager
-    @ Domain 1: 0b11 = Manager  
-    @ Domain 2 (hardware): 0b11 = Manager
-    @ Bits: [1:0]=d0, [3:2]=d1, [5:4]=d2...
     ldr r1, =0x000000FF                @ Manager for domains 0-3
     mcr p15, 0, r1, c3, c0, 0          @ Domain Access Control
     
@@ -142,4 +114,3 @@ enable_mmu:
     
     bx lr
     .cfi_endproc
-    

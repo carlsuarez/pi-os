@@ -1,15 +1,18 @@
-use crate::kcore::sync::SpinLock;
 use crate::mm::buddy_allocator::BuddyAllocator;
+use crate::mm::page_table::{L1Table, L2Table, PageBlock};
+use crate::{kcore::sync::SpinLock, mm::page_table::Page};
 use core::{
     mem::MaybeUninit,
-    ptr::NonNull,
     sync::atomic::{AtomicBool, Ordering},
 };
 
+const PAGE_SIZE: usize = 4096;
+
 /// Global storage for the buddy allocator, wrapped in a spinlock for
 /// safe concurrent access.
-static mut BUDDY_STORAGE: MaybeUninit<SpinLock<BuddyAllocator>> = MaybeUninit::uninit();
-static BUDDY_INITIALIZED: AtomicBool = AtomicBool::new(false);
+pub(in crate::mm) static mut BUDDY_STORAGE: MaybeUninit<SpinLock<BuddyAllocator>> =
+    MaybeUninit::uninit();
+pub(in crate::mm) static BUDDY_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// High-level interface for allocating pages, page blocks, and page tables.
 ///
@@ -37,7 +40,7 @@ impl PageAllocator {
         }
 
         unsafe {
-            let mut alloc = BuddyAllocator::new();
+            let mut alloc = BuddyAllocator::new(PAGE_SIZE);
             alloc.init(start, end);
 
             let storage_ptr = core::ptr::addr_of_mut!(BUDDY_STORAGE);
@@ -72,192 +75,22 @@ impl PageAllocator {
     }
 
     /// Allocates a single page.
-    pub fn alloc_page(&self) -> Option<Page> {
-        self.with_allocator(|alloc| unsafe { alloc.alloc_page() }.map(Page::new))
+    pub fn alloc(&self) -> Option<Page> {
+        self.with_allocator(|alloc| unsafe { alloc.alloc_block() }.map(Page::new))
     }
 
     /// Allocates a block of pages of size `2^ORDER`.
     pub fn alloc_block<const ORDER: usize>(&self) -> Option<PageBlock<ORDER>> {
-        self.with_allocator(|alloc| unsafe { alloc.alloc_pages(ORDER) }.map(PageBlock::new))
+        self.with_allocator(|alloc| unsafe { alloc.alloc_block_order(ORDER) }.map(PageBlock::new))
     }
 
     /// Allocates an L1 page table (8 KiB, order = 2).
     pub fn alloc_l1_table(&self) -> Option<L1Table> {
-        self.with_allocator(|alloc| unsafe { alloc.alloc_pages(2) }.map(L1Table::new))
+        self.with_allocator(|alloc| unsafe { alloc.alloc_block_order(2) }.map(L1Table::new))
     }
 
     /// Allocates an L2 page table (single page).
     pub fn alloc_l2_table(&self) -> Option<L2Table> {
-        self.with_allocator(|alloc| unsafe { alloc.alloc_page() }.map(L2Table::new))
-    }
-}
-
-#[cfg(debug_assertions)]
-mod debug {
-    use core::sync::atomic::{AtomicBool, Ordering};
-
-    /// Tracks whether an allocation has been freed to detect double frees.
-    pub struct AllocFlag {
-        freed: AtomicBool,
-    }
-
-    impl AllocFlag {
-        pub const fn new() -> Self {
-            Self {
-                freed: AtomicBool::new(false),
-            }
-        }
-
-        /// Marks the allocation as freed. Panics if double free detected.
-        pub fn mark_freed(&self) {
-            if self.freed.swap(true, Ordering::SeqCst) {
-                panic!("double free detected");
-            }
-        }
-    }
-}
-
-#[cfg(not(debug_assertions))]
-mod debug {
-    /// Dummy flag for non-debug builds.
-    pub struct AllocFlag;
-    impl AllocFlag {
-        pub const fn new() -> Self {
-            Self
-        }
-        pub fn mark_freed(&self) {}
-    }
-}
-
-/*
- * RAII allocation types
- */
-
-/// Represents a single allocated page.
-pub struct Page {
-    addr: NonNull<u8>,
-    flag: debug::AllocFlag,
-}
-
-impl Page {
-    fn new(addr: usize) -> Self {
-        Self {
-            addr: NonNull::new(addr as *mut u8).unwrap(),
-            flag: debug::AllocFlag::new(),
-        }
-    }
-
-    /// Returns the physical address of the page.
-    pub fn addr(&self) -> usize {
-        self.addr.as_ptr() as usize
-    }
-}
-
-impl Drop for Page {
-    /// Frees the page when it goes out of scope.
-    fn drop(&mut self) {
-        self.flag.mark_freed();
-        unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_page(self.addr());
-        }
-    }
-}
-
-/// Represents a block of pages of size `2^ORDER`.
-pub struct PageBlock<const ORDER: usize> {
-    addr: NonNull<u8>,
-    flag: debug::AllocFlag,
-}
-
-impl<const ORDER: usize> PageBlock<ORDER> {
-    fn new(addr: usize) -> Self {
-        Self {
-            addr: NonNull::new(addr as *mut u8).unwrap(),
-            flag: debug::AllocFlag::new(),
-        }
-    }
-
-    /// Returns the base physical address of the block.
-    pub fn addr(&self) -> usize {
-        self.addr.as_ptr() as usize
-    }
-}
-
-impl<const ORDER: usize> Drop for PageBlock<ORDER> {
-    fn drop(&mut self) {
-        self.flag.mark_freed();
-        unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_pages(self.addr(), ORDER);
-        }
-    }
-}
-
-/// Represents an L1 page table (8 KiB, order = 2).
-pub struct L1Table {
-    addr: NonNull<u8>,
-    flag: debug::AllocFlag,
-}
-
-impl L1Table {
-    fn new(addr: usize) -> Self {
-        Self {
-            addr: NonNull::new(addr as *mut u8).unwrap(),
-            flag: debug::AllocFlag::new(),
-        }
-    }
-
-    /// Returns the base address of the L1 table.
-    pub fn base(&self) -> usize {
-        self.addr.as_ptr() as usize
-    }
-}
-
-impl Drop for L1Table {
-    fn drop(&mut self) {
-        self.flag.mark_freed();
-        unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_pages(self.base(), 2);
-        }
-    }
-}
-
-/// Represents an L2 page table (single page).
-pub struct L2Table {
-    addr: NonNull<u8>,
-    flag: debug::AllocFlag,
-}
-
-impl L2Table {
-    fn new(addr: usize) -> Self {
-        Self {
-            addr: NonNull::new(addr as *mut u8).unwrap(),
-            flag: debug::AllocFlag::new(),
-        }
-    }
-
-    /// Returns the base address of the L2 table.
-    pub fn base(&self) -> usize {
-        self.addr.as_ptr() as usize
-    }
-}
-
-impl Drop for L2Table {
-    fn drop(&mut self) {
-        self.flag.mark_freed();
-        unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_page(self.base());
-        }
+        self.with_allocator(|alloc| unsafe { alloc.alloc_block() }.map(L2Table::new))
     }
 }

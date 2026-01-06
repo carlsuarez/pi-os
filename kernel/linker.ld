@@ -33,33 +33,14 @@ SECTIONS
         _bss_end = .;
     }
 
-    /* L1 page table (16KB, 16KB aligned) */
+    /* Kernel's L1 page table (16KB, 16KB aligned) */
     .l1pagetable (NOLOAD) : ALIGN(16K) {
         _l1pagetable_start = .;
         KEEP(*(.l1pagetable))
         _l1pagetable_end = .;
     }
 
-    /* Coarse page tables backing store (1MB) */
-    .coarsepagetables_space (NOLOAD) : ALIGN(1M) {
-        _coarsepagetables_space_start = .;
-        KEEP(*(.coarsepagetables_space))
-        _coarsepagetables_space_end = .;
-    }
-
-    /* Pool for additional L1 tables (2MB) */
-    .l1pagetables_space (NOLOAD) : ALIGN(16K) {
-        _l1pagetables_space_start = .;
-        KEEP(*(.l1pagetables_space))
-        _l1pagetables_space_end = .;
-    }
-
-    /* Free physical pages */
-    .freepages (NOLOAD) : ALIGN(4K) {
-        _free_pages_start = .;
-        KEEP(*(.freepages))
-        _free_pages_end = .;
-    }
+    /* Kernel heap */
     . = ALIGN(4096);
     _kernel_heap_start = .;
     . = . + 0x40000;          /* 256 KB */
@@ -84,6 +65,10 @@ SECTIONS
     _svc_stack_top = .;
 
     _kernel_end = .;
+
+    . = ALIGN(4096);
+    _free_memory_start = .;
+    /* The end will be determined at runtime based on RAM size */
 
     /DISCARD/ : {
         *(.ARM.exidx*)
