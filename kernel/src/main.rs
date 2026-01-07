@@ -14,7 +14,8 @@ use crate::irq::handlers;
 use crate::mm::heap_allocator;
 use crate::mm::page_allocator::PAGE_ALLOCATOR;
 use core::panic::PanicInfo;
-use drivers::hw::bcm2835::{firmware_memory::get_arm_memory, interrupt, timer::Timer};
+use drivers::hw::bcm2835::timer::TimerChannel;
+use drivers::hw::bcm2835::{firmware_memory::get_arm_memory, interrupt};
 use drivers::{uart::*, uart_println};
 
 // Linker symbols
@@ -61,7 +62,7 @@ pub extern "C" fn kernel_main() -> ! {
 
     crate::arch::arm::interrupt::enable(); // Enable IRQs
 
-    Timer::start(1000000); // 1 second
+    drivers::hw::bcm2835::timer::timer().start(TimerChannel::Channel0, 1000000); // 1 second
 
     uart_println!("Kernel initialized successfully!");
     loop {}
