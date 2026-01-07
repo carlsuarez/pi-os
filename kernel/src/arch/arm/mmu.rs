@@ -1,7 +1,5 @@
-use crate::{
-    kcore::sync::SpinLock,
-    mm::page_table::{L1Table, L2Table},
-};
+use crate::mm::page_table::{L1Table, L2Table};
+use common::sync::SpinLock;
 use core::ptr;
 use drivers::hw::bcm2835::PERIPHERAL_BASE;
 

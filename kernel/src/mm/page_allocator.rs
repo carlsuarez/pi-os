@@ -1,6 +1,7 @@
 use crate::mm::buddy_allocator::BuddyAllocator;
+use crate::mm::page_table::Page;
 use crate::mm::page_table::{L1Table, L2Table, PageBlock};
-use crate::{kcore::sync::SpinLock, mm::page_table::Page};
+use common::sync::SpinLock;
 use core::{
     mem::MaybeUninit,
     sync::atomic::{AtomicBool, Ordering},

@@ -12,7 +12,7 @@ use crate::irq::handlers;
 use crate::mm::PageAllocator;
 use core::panic::PanicInfo;
 use drivers::hw::bcm2835::{firmware_memory::get_arm_memory, interrupt, timer::Timer};
-use drivers::uart::*;
+use drivers::{uart::*, uart_println};
 
 // Linker symbols
 unsafe extern "C" {
@@ -22,7 +22,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
     // Initialize UART0
-    uart0().init(115200).expect("Uart init failed\n");
+    init_uart0(115200).expect("Failed to initialize UART0\n");
 
     // Initialize page allocator (FIRST AND ONLY TIME)
     unsafe {
@@ -43,13 +43,13 @@ pub extern "C" fn kernel_main() -> ! {
 
     Timer::start(1000000); // 1 second
 
-    uart0().puts("Hello world!\n");
+    uart_println!("Kernel initialized successfully!");
     loop {}
 }
 
 // Required panic handler
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    uart0().puts("Kernel panic!\n");
+fn panic(info: &PanicInfo) -> ! {
+    uart_println!("Kernel panic: {}", info);
     loop {}
 }
