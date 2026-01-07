@@ -1,4 +1,4 @@
-use crate::mm::page_allocator::BUDDY_STORAGE;
+use crate::mm::page_allocator::{PAGE_ALLOCATOR, PAGE_SIZE};
 use core::ptr::NonNull;
 
 #[cfg(debug_assertions)]
@@ -50,6 +50,11 @@ pub struct Page {
 
 impl Page {
     pub fn new(addr: usize) -> Self {
+        // Zero page
+        unsafe {
+            core::ptr::write_bytes(addr as *mut u8, 0, PAGE_SIZE);
+        }
+
         Self {
             addr: NonNull::new(addr as *mut u8).unwrap(),
             flag: debug::AllocFlag::new(),
@@ -67,10 +72,7 @@ impl Drop for Page {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_block(self.addr(), 0);
+            PAGE_ALLOCATOR.free_block(self.addr(), 0);
         }
     }
 }
@@ -83,6 +85,11 @@ pub struct PageBlock<const ORDER: usize> {
 
 impl<const ORDER: usize> PageBlock<ORDER> {
     pub fn new(addr: usize) -> Self {
+        // Zero block
+        unsafe {
+            core::ptr::write_bytes(addr as *mut u8, 0, PAGE_SIZE << ORDER);
+        }
+
         Self {
             addr: NonNull::new(addr as *mut u8).unwrap(),
             flag: debug::AllocFlag::new(),
@@ -99,10 +106,7 @@ impl<const ORDER: usize> Drop for PageBlock<ORDER> {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_block(self.addr(), ORDER);
+            PAGE_ALLOCATOR.free_block(self.addr(), ORDER);
         }
     }
 }
@@ -115,6 +119,11 @@ pub struct L1Table {
 
 impl L1Table {
     pub fn new(addr: usize) -> Self {
+        // Zero table
+        unsafe {
+            core::ptr::write_bytes(addr as *mut u8, 0, PAGE_SIZE << 1);
+        }
+
         Self {
             addr: NonNull::new(addr as *mut u32).unwrap(),
             flag: debug::AllocFlag::new(),
@@ -128,13 +137,13 @@ impl L1Table {
 
     /// Set an entry at the given index (0..4095)
     pub fn set_entry(&mut self, index: usize, value: u32) {
-        assert!(index < 4096, "L1Table index out of bounds");
+        assert!(index < 4096, "L1Table index {} out of bounds", index);
         unsafe { self.addr.as_ptr().add(index).write_volatile(value) }
     }
 
     /// Get an entry at the given index
     pub fn get_entry(&self, index: usize) -> u32 {
-        assert!(index < 4096, "L1Table index out of bounds");
+        assert!(index < 4096, "L1Table index {} out of bounds", index);
         unsafe { self.addr.as_ptr().add(index).read_volatile() }
     }
 }
@@ -143,10 +152,7 @@ impl Drop for L1Table {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_block(self.base(), 2);
+            PAGE_ALLOCATOR.free_block(self.base(), 2);
         }
     }
 }
@@ -159,6 +165,11 @@ pub struct L2Table {
 
 impl L2Table {
     pub fn new(addr: usize) -> Self {
+        // Zero table
+        unsafe {
+            core::ptr::write_bytes(addr as *mut u8, 0, PAGE_SIZE);
+        }
+
         Self {
             addr: NonNull::new(addr as *mut u32).unwrap(),
             flag: debug::AllocFlag::new(),
@@ -167,13 +178,13 @@ impl L2Table {
 
     /// Set an entry at the given index (0..255)
     pub fn set_entry(&mut self, index: usize, value: u32) {
-        assert!(index < 256, "L2Table index out of bounds");
+        assert!(index < 256, "L2Table index {} out of bounds", index);
         unsafe { self.addr.as_ptr().add(index).write_volatile(value) }
     }
 
     /// Get an entry at the given index
     pub fn get_entry(&self, index: usize) -> u32 {
-        assert!(index < 256, "L2Table index out of bounds");
+        assert!(index < 256, "L2Table index {} out of bounds", index);
         unsafe { self.addr.as_ptr().add(index).read_volatile() }
     }
 
@@ -187,10 +198,7 @@ impl Drop for L2Table {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            let storage_ptr = core::ptr::addr_of!(BUDDY_STORAGE);
-            let alloc = &*(*storage_ptr).as_ptr();
-            let mut guard = alloc.lock();
-            guard.free_block(self.base(), 0);
+            PAGE_ALLOCATOR.free_block(self.base(), 0);
         }
     }
 }

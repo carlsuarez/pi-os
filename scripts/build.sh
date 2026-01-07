@@ -19,9 +19,9 @@ for f in $ASM_FILES; do
 done
 
 echo "[*] Building Rust kernel..."
-cargo rustc --release \
+cargo +nightly rustc --release \
     --target "$RUST_TARGET_JSON" \
-    -Z build-std=core,compiler_builtins \
+    -Z build-std=core,alloc,compiler_builtins \
     -Z build-std-features=compiler-builtins-mem \
     -p kernel \
     -- \

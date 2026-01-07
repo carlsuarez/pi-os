@@ -1,4 +1,7 @@
-use core::ptr::{self, NonNull};
+use core::{
+    alloc::Layout,
+    ptr::{self, NonNull},
+};
 
 /// Maximum supported order for buddy allocator (2^MAX_ORDER * min_block_size max block size)
 pub const MAX_ORDER: usize = 10;
@@ -10,7 +13,7 @@ struct FreeBlock {
 }
 
 /// Header stored before each allocated block in the heap
-#[repr(C)]
+#[repr(C, align(8))]
 struct BlockHeader {
     /// Order of the allocated block (power-of-two)
     order: u8,
@@ -93,37 +96,44 @@ impl BuddyAllocator {
         }
     }
 
-    /// Allocates a block of at least `size` bytes.
+    /// Allocates a block of at least `layout.size()` bytes.
     ///
-    /// Returns a pointer to usable memory (after the header) or `None` if out of memory.
+    /// Returns an aligned pointer to usable memory (after the header) or `None` if out of memory.
     ///
     /// # Safety
     /// Caller must not access the same memory from multiple threads without synchronization.
-    pub unsafe fn alloc(&mut self, size: usize) -> Option<NonNull<u8>> {
-        if size == 0 {
+    pub unsafe fn alloc(&mut self, layout: Layout) -> Option<NonNull<u8>> {
+        if layout.size() == 0 {
             return None;
         }
 
-        // Include space for header
-        let total_size = size + core::mem::size_of::<BlockHeader>();
+        let align = layout.align().max(core::mem::align_of::<BlockHeader>());
+
+        // Round header up to alignment
+        let header_size = core::mem::size_of::<BlockHeader>();
+        let header_size = (header_size + align - 1) & !(align - 1);
+
+        let total_size = layout.size() + header_size;
+
         let mut order = 0;
         let mut block_size = self.min_block_size;
+
         while block_size < total_size {
             order += 1;
             block_size <<= 1;
         }
 
-        if let Some(addr) = unsafe { self.alloc_block_order(order) } {
+        unsafe {
+            let addr = self.alloc_block_order(order)?;
             let header_ptr = addr as *mut BlockHeader;
-            unsafe {
-                (*header_ptr).order = order as u8;
-                return Some(NonNull::new_unchecked(
-                    (addr + core::mem::size_of::<BlockHeader>()) as *mut u8,
-                ));
-            }
-        }
+            (*header_ptr).order = order as u8;
 
-        None
+            let user_ptr = addr + header_size;
+
+            debug_assert!(user_ptr % align == 0, "Non-aligned allocation returned");
+
+            Some(NonNull::new_unchecked(user_ptr as *mut u8))
+        }
     }
 
     /// Frees a block previously allocated with `alloc`.
@@ -137,10 +147,11 @@ impl BuddyAllocator {
         }
 
         let header_addr = (ptr as usize) - core::mem::size_of::<BlockHeader>();
-        let header_ptr = header_addr as *mut BlockHeader;
 
         unsafe {
-            let order = (*header_ptr).order as usize;
+            let header = &*(header_addr as *const BlockHeader);
+            let order = header.order as usize;
+
             self.free_block(header_addr, order);
         }
     }
@@ -286,3 +297,10 @@ impl BuddyAllocator {
         false
     }
 }
+
+// SAFETY: BuddyAllocator's raw pointers point to memory it exclusively manages.
+// The allocator maintains invariants that these pointers are always valid within
+// its memory region. Thread safety is guaranteed by external synchronization
+// (SpinLock in HeapAllocator).
+unsafe impl Send for BuddyAllocator {}
+unsafe impl Sync for BuddyAllocator {}
