@@ -86,31 +86,45 @@ halt:
     .type enable_mmu, %function
 enable_mmu:
     .cfi_startproc
-    .loc 1 89 0
-    mov r1, #0
-    mcr p15, 0, r1, c8, c7, 0          @ Invalidate TLB
-    
-    ldr r0, =l1_page_table
-    mcr p15, 0, r0, c2, c0, 0          @ TTBR0
-    
-    mov r1, #0
-    mcr p15, 0, r1, c2, c0, 2          @ TTBCR = 0
-    
-    @ Domain Access Control: Manager access for domains 0-2
-    ldr r1, =0x000000FF                @ Manager for domains 0-3
-    mcr p15, 0, r1, c3, c0, 0          @ Domain Access Control
-    
-    mov r1, #0
-    mcr p15, 0, r1, c7, c10, 4         @ DSB
-    
-    mrc p15, 0, r1, c1, c0, 0
-    orr r1, r1, #(1 << 0)              @ Enable MMU
-    orr r1, r1, #(1 << 2)              @ D-cache
-    orr r1, r1, #(1 << 12)             @ I-cache
-    mcr p15, 0, r1, c1, c0, 0
-    
-    mov r1, #0
-    mcr p15, 0, r1, c7, c5, 4          @ ISB
-    
-    bx lr
+    /* Invalidate unified TLB */
+    mov     r0, #0
+    mcr     p15, 0, r0, c8, c7, 0
+
+    /* Set TTBR0 = L1 page table base + RGN=WBWA */
+    ldr     r0, =l1_page_table
+    orr     r0, r0, #(1 << 3)      @ RGN = Write-back, Write-allocate
+    mcr     p15, 0, r0, c2, c0, 0  @ TTBR0
+
+    /* Use TTBR0 only */
+    mov     r0, #0
+    mcr     p15, 0, r0, c2, c0, 2  @ TTBCR = 0
+
+    /* Domain Access Control
+     * Domain 0–3 = Client (01)
+     */
+    ldr     r0, =0x55555555
+    mcr     p15, 0, r0, c3, c0, 0
+
+    /* Disable AFE (use legacy AP encoding) */
+    mrc     p15, 0, r0, c1, c0, 0
+    bic     r0, r0, #(1 << 29)     @ SCTLR.AFE = 0
+    mcr     p15, 0, r0, c1, c0, 0
+
+    /* Data Synchronization Barrier */
+    mov     r0, #0
+    mcr     p15, 0, r0, c7, c10, 4
+
+    /* Enable MMU + caches */
+    mrc     p15, 0, r0, c1, c0, 0
+    orr     r0, r0, #(1 << 0)      @ MMU enable
+    orr     r0, r0, #(1 << 2)      @ D-cache enable
+    orr     r0, r0, #(1 << 12)     @ I-cache enable
+    mcr     p15, 0, r0, c1, c0, 0
+
+    /* Instruction Synchronization Barrier */
+    mov     r0, #0
+    mcr     p15, 0, r0, c7, c5, 4
+
+    bx      lr
+    .size enable_mmu, . - enable_mmu
     .cfi_endproc

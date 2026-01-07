@@ -1,7 +1,6 @@
 # Connect to QEMU
 target remote localhost:1234
 
-file kernel.elf
 set architecture arm
 set disassembly-flavor intel
 set pagination off

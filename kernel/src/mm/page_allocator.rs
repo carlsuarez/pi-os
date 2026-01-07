@@ -36,7 +36,7 @@ impl PageAllocator {
     /// Panics if called more than once.
     pub unsafe fn init(start: usize, end: usize) {
         if BUDDY_INITIALIZED.swap(true, Ordering::AcqRel) {
-            panic!("PageAllocator initialized twice");
+            panic!("PageAllocator initialized twice\n");
         }
 
         unsafe {

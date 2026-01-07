@@ -10,3 +10,6 @@ target/
 
 # Editor
 .vscode/
+
+# Log
+*.log

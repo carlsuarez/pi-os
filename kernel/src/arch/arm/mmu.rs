@@ -121,6 +121,9 @@ pub fn is_valid_l1_coarse_entry(entry: u32) -> bool {
     entry & 0x3 == 0x1
 }
 
+/// Get an L1 table reference to the kernel's page table
+///# Safety
+/// Caller must ensure exclusive access if modifying entries.
 pub unsafe fn get_kernel_l1_table() -> L1Table {
     L1Table::new(core::ptr::addr_of_mut!(l1_page_table) as usize)
 }
@@ -168,7 +171,9 @@ pub unsafe extern "C" fn init_kernel_page_table() {
         }
 
         // Map entire first 256MB as normal memory (covers kernel, stacks, etc.)
-        for i in 0..256 {
+        let (base, size) = drivers::hw::bcm2835::firmware_memory::get_arm_memory()
+            .expect("Failed to get ARM memory from firmware\n");
+        for i in base..(base + size) / SECTION_SIZE {
             let addr = i * SECTION_SIZE;
             ptr::write_volatile(
                 l1.add(l1_index(addr)),

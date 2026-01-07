@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-KERNEL="kernel.elf"
-
 echo "[*] Starting QEMU"
 qemu-system-arm \
     -M raspi0 \
-    -kernel "$KERNEL" \
-    -nographic
+    -kernel "$1" \
+    -nographic \
+    -D qemu.log \
+    -d int,guest_errors
