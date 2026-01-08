@@ -18,9 +18,9 @@ pub(crate) fn get_handler(irq: u32) -> Option<IrqHandler> {
 }
 
 pub fn timer(_tf: &mut TrapFrame) {
-    drivers::hw::bcm2835::timer::timer().clear_interrupt(TimerChannel::Channel0);
+    drivers::hw::bcm2835::timer::timer().clear_interrupt();
     uart_println!("Timer interrupt");
-    drivers::hw::bcm2835::timer::timer().start(TimerChannel::Channel0, 1_000_000); // 1 second
+    drivers::hw::bcm2835::timer::timer().start(TimerChannel::Channel1, 1_000_000); // 1 second
 }
 
 pub fn uart(_tf: &mut TrapFrame) {}

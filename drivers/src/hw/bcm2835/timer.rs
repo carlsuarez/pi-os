@@ -1,4 +1,5 @@
-use common::sync::SpinLock;
+use common::arch::arm::irq::ArmIrq;
+use common::sync::IrqSpinLock;
 use core::ptr::{read_volatile, write_volatile};
 
 /// Base physical address of the system timer peripheral.
@@ -11,11 +12,43 @@ pub const TIMER_BASE: usize = 0x2000_3000;
 /// Each channel has an associated compare register (`C0`–`C3`) and a
 /// corresponding match bit in the control/status register.
 #[derive(Copy, Clone)]
+#[repr(usize)]
 pub enum TimerChannel {
-    Channel0,
-    Channel1,
-    Channel2,
-    Channel3,
+    Channel0 = 0,
+    Channel1 = 1,
+    Channel2 = 2,
+    Channel3 = 3,
+}
+
+impl TimerChannel {
+    /// Get the IRQ number associated with this timer channel.
+    pub fn irq_number(&self) -> u32 {
+        match self {
+            TimerChannel::Channel0 => common::arch::arm::bcm2835::irq::IRQ_SYSTEM_TIMER_0,
+            TimerChannel::Channel1 => common::arch::arm::bcm2835::irq::IRQ_SYSTEM_TIMER_1,
+            TimerChannel::Channel2 => common::arch::arm::bcm2835::irq::IRQ_SYSTEM_TIMER_2,
+            TimerChannel::Channel3 => common::arch::arm::bcm2835::irq::IRQ_SYSTEM_TIMER_3,
+        }
+    }
+
+    #[inline]
+    /// Get the bitmask for this timer channel's match bit.
+    pub fn as_bitmask(&self) -> u32 {
+        1 << (*self as u32)
+    }
+}
+
+/// Convert usize to TimerChannel
+impl From<usize> for TimerChannel {
+    fn from(value: usize) -> Self {
+        match value {
+            0 => TimerChannel::Channel0,
+            1 => TimerChannel::Channel1,
+            2 => TimerChannel::Channel2,
+            3 => TimerChannel::Channel3,
+            _ => panic!("Invalid TimerChannel value: {}", value),
+        }
+    }
 }
 
 /// Memory-mapped register layout of the system timer.
@@ -40,11 +73,23 @@ struct TimerRegisters {
     c3: u32,
 }
 
+impl TimerRegisters {
+    /// Get a pointer to the compare register for the given channel
+    fn compare_reg(&mut self, channel: TimerChannel) -> *mut u32 {
+        match channel {
+            TimerChannel::Channel0 => &mut self.c0 as *mut u32,
+            TimerChannel::Channel1 => &mut self.c1 as *mut u32,
+            TimerChannel::Channel2 => &mut self.c2 as *mut u32,
+            TimerChannel::Channel3 => &mut self.c3 as *mut u32,
+        }
+    }
+}
+
 /// Offset (in `u32` words) from the base of `TimerRegisters` to the first
 /// compare register (`c0`).
 ///
 /// Additional channels are addressed by adding the channel index.
-const CHANNEL_OFFSET: usize = 0xC;
+const CHANNEL_OFFSET: usize = 0x3;
 
 /// High-level interface to the system timer.
 ///
@@ -53,7 +98,7 @@ const CHANNEL_OFFSET: usize = 0xC;
 /// single-writer or externally synchronized access.
 pub struct Timer {
     regs: *mut TimerRegisters,
-    channel_locks: [SpinLock<()>; 4],
+    channel_locks: [IrqSpinLock<(), ArmIrq>; 4],
 }
 
 /// SAFETY: `Timer` provides access to memory-mapped hardware registers.
@@ -72,10 +117,10 @@ impl Timer {
         Self {
             regs: TIMER_BASE as *mut TimerRegisters,
             channel_locks: [
-                SpinLock::new(()),
-                SpinLock::new(()),
-                SpinLock::new(()),
-                SpinLock::new(()),
+                IrqSpinLock::new(()),
+                IrqSpinLock::new(()),
+                IrqSpinLock::new(()),
+                IrqSpinLock::new(()),
             ],
         }
     }
@@ -95,23 +140,41 @@ impl Timer {
     /// - Uses wrapping arithmetic to handle counter overflow.
     /// - Any pending match for the channel is cleared before enabling.
     pub fn start(&self, channel: TimerChannel, interval_us: u32) {
+        // Acquire lock FIRST
+        let _guard = self.channel_locks[channel as usize].lock();
+
         unsafe {
-            let r = self.regs;
+            let r = &mut *self.regs;
 
-            // Read current timer value (lower 32 bits).
-            let now = read_volatile(&(*r).clo);
+            // Read current timer value
+            let now = read_volatile(&r.clo);
 
-            // Compute address of the selected compare register.
-            let compare_reg: *mut u32 = (r as *mut u32).add(CHANNEL_OFFSET + (channel as usize));
+            // Clear any pending match (write-1-to-clear)
+            write_volatile(&mut r.cs, channel.as_bitmask());
 
-            // Acquire lock for the channel.
-            let _guard = self.channel_locks[channel as usize].lock();
+            // Program compare value
+            let compare_reg = r.compare_reg(channel);
+            write_volatile(compare_reg, now.wrapping_add(interval_us));
+        }
+    }
 
-            // Program compare value.
-            write_volatile(&mut *compare_reg, now.wrapping_add(interval_us));
+    /// Clear all pending interrupts.
+    pub fn clear_interrupt(&self) {
+        unsafe {
+            let cs = read_volatile(&(*self.regs).cs);
 
-            // Clear any pending match (write-1-to-clear).
-            write_volatile(&mut (*r).cs, channel as u32);
+            for i in 0..4 {
+                if (cs & (1 << i)) != 0 {
+                    let channel = match i {
+                        0 => TimerChannel::Channel0,
+                        1 => TimerChannel::Channel1,
+                        2 => TimerChannel::Channel2,
+                        3 => TimerChannel::Channel3,
+                        _ => unreachable!(),
+                    };
+                    self.clear_interrupt_channel(channel);
+                }
+            }
         }
     }
 
@@ -119,10 +182,10 @@ impl Timer {
     ///
     /// This acknowledges the interrupt by writing a `1` to the corresponding
     /// match bit in the control/status register.
-    pub fn clear_interrupt(&self, channel: TimerChannel) {
+    pub fn clear_interrupt_channel(&self, channel: TimerChannel) {
         let _guard = self.channel_locks[channel as usize].lock();
         unsafe {
-            write_volatile(&mut (*self.regs).cs, channel as u32);
+            write_volatile(&mut (*self.regs).cs, channel.as_bitmask());
         }
     }
 }
