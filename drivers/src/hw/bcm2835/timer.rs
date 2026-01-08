@@ -22,7 +22,7 @@ pub enum TimerChannel {
 
 impl TimerChannel {
     /// Get the IRQ number associated with this timer channel.
-    pub fn irq_number(&self) -> u32 {
+    pub fn irq_number(self) -> u32 {
         match self {
             TimerChannel::Channel0 => common::arch::arm::bcm2835::irq::IRQ_SYSTEM_TIMER_0,
             TimerChannel::Channel1 => common::arch::arm::bcm2835::irq::IRQ_SYSTEM_TIMER_1,
@@ -33,20 +33,22 @@ impl TimerChannel {
 
     #[inline]
     /// Get the bitmask for this timer channel's match bit.
-    pub fn as_bitmask(&self) -> u32 {
-        1 << (*self as u32)
+    pub fn as_bitmask(self) -> u32 {
+        1 << (self as u32)
     }
 }
 
 /// Convert usize to TimerChannel
-impl From<usize> for TimerChannel {
-    fn from(value: usize) -> Self {
+impl core::convert::TryFrom<usize> for TimerChannel {
+    type Error = ();
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
         match value {
-            0 => TimerChannel::Channel0,
-            1 => TimerChannel::Channel1,
-            2 => TimerChannel::Channel2,
-            3 => TimerChannel::Channel3,
-            _ => panic!("Invalid TimerChannel value: {}", value),
+            0 => Ok(TimerChannel::Channel0),
+            1 => Ok(TimerChannel::Channel1),
+            2 => Ok(TimerChannel::Channel2),
+            3 => Ok(TimerChannel::Channel3),
+            _ => Err(()),
         }
     }
 }
