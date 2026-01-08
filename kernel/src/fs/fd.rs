@@ -1,6 +1,5 @@
-use super::file::File;
-use crate::fs::file::SeekWhence;
-use alloc::vec::Vec;
+use super::file::{File, SeekWhence, UartFile};
+use alloc::{sync::Arc, vec::Vec};
 use core::fmt;
 
 /// File descriptor number (index into process's fd table)
@@ -19,7 +18,7 @@ impl Fd {
 /// A file descriptor entry in a process's file descriptor table
 pub struct FileDescriptor {
     /// The underlying file
-    file: File,
+    file: Arc<dyn File>,
     /// Flags (close-on-exec, etc.)
     flags: FdFlags,
     /// Current file offset (for seekable files)
@@ -28,7 +27,7 @@ pub struct FileDescriptor {
 
 impl FileDescriptor {
     /// Create a new file descriptor
-    pub fn new(file: File, flags: FdFlags) -> Self {
+    pub fn new(file: Arc<dyn File>, flags: FdFlags) -> Self {
         Self {
             file,
             flags,
@@ -73,7 +72,7 @@ impl FileDescriptor {
     }
 
     /// Get file reference
-    pub fn file(&self) -> &File {
+    pub fn file(&self) -> &Arc<dyn File> {
         &self.file
     }
 
@@ -91,7 +90,7 @@ impl FileDescriptor {
 impl fmt::Debug for FileDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FileDescriptor")
-            .field("file", &self.file)
+            .field("file", &format_args!("<file>"))
             .field("offset", &self.offset)
             .field("flags", &self.flags)
             .finish()
@@ -139,9 +138,9 @@ impl FileDescriptorTable {
 
         // Initialize standard streams
         // For now, use UART for all three
-        let stdin = FileDescriptor::new(File::new_uart(), FdFlags::NONE);
-        let stdout = FileDescriptor::new(File::new_uart(), FdFlags::NONE);
-        let stderr = FileDescriptor::new(File::new_uart(), FdFlags::NONE);
+        let stdin = FileDescriptor::new(Arc::new(UartFile), FdFlags::NONE);
+        let stdout = FileDescriptor::new(Arc::new(UartFile), FdFlags::NONE);
+        let stderr = FileDescriptor::new(Arc::new(UartFile), FdFlags::NONE);
 
         table.fds.push(Some(stdin));
         table.fds.push(Some(stdout));
@@ -151,7 +150,7 @@ impl FileDescriptorTable {
     }
 
     /// Allocate a new file descriptor
-    pub fn alloc(&mut self, file: File, flags: FdFlags) -> Result<Fd, FdError> {
+    pub fn alloc(&mut self, file: Arc<dyn File>, flags: FdFlags) -> Result<Fd, FdError> {
         // Try to find a free slot
         for (i, slot) in self.fds.iter_mut().enumerate() {
             if slot.is_none() {
