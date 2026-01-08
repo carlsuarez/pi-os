@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 drivers = { path = "../drivers" }
 common = { path = "../common" }
+cfg-if = "1.0"
 
 [[bin]]
 name = "kernel"

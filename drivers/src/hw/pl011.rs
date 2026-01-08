@@ -142,6 +142,22 @@ impl Pl011 {
         }
     }
 
+    /// Read a single byte from the UART (blocking)
+    ///
+    /// Returns the received byte
+    pub fn read_byte(&self) -> u8 {
+        unsafe {
+            let regs = &*self.regs;
+
+            // Wait for data to be available
+            while (regs.fr & FR_RXFE) != 0 {
+                core::hint::spin_loop();
+            }
+
+            (regs.dr & 0xFF) as u8
+        }
+    }
+
     /// Try to read a byte from the UART (non-blocking)
     ///
     /// Returns `Some(byte)` if data is available, `None` otherwise

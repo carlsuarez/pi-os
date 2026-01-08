@@ -5,9 +5,11 @@
 
 extern crate alloc;
 mod arch;
+mod fs;
 mod irq;
 mod kcore;
 mod mm;
+mod process;
 mod syscall;
 use crate::irq::handlers;
 use crate::mm::heap_allocator;
