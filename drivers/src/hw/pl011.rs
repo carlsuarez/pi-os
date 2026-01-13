@@ -81,10 +81,11 @@ impl Pl011 {
         }
 
         unsafe {
-            let regs = &mut *self.regs;
-
             // Disable UART before configuration
-            regs.cr &= !CR_UARTEN;
+            let cr_ptr = core::ptr::addr_of_mut!((*self.regs).cr);
+            let mut cr = core::ptr::read_volatile(cr_ptr);
+            cr &= !CR_UARTEN;
+            core::ptr::write_volatile(cr_ptr, cr);
 
             // Wait for any ongoing transmission to complete
             while self.is_busy() {
@@ -92,25 +93,33 @@ impl Pl011 {
             }
 
             // Flush FIFOs by temporarily disabling them
-            regs.lcrh &= !LCRH_FEN;
+            let lcrh_ptr = core::ptr::addr_of_mut!((*self.regs).lcrh);
+            let mut lcrh = core::ptr::read_volatile(lcrh_ptr);
+            lcrh &= !LCRH_FEN;
+            core::ptr::write_volatile(lcrh_ptr, lcrh);
 
             // Calculate and set baud rate divisors
             let (ibrd, fbrd) = Self::calculate_divisors(baud_rate)?;
-            regs.ibrd = ibrd;
-            regs.fbrd = fbrd;
+            let ibrd_ptr = core::ptr::addr_of_mut!((*self.regs).ibrd);
+            let fbrd_ptr = core::ptr::addr_of_mut!((*self.regs).fbrd);
+            core::ptr::write_volatile(ibrd_ptr, ibrd);
+            core::ptr::write_volatile(fbrd_ptr, fbrd);
 
             // Configure line control: 8N1 with FIFOs enabled
-            regs.lcrh = LCRH_WLEN_8 | LCRH_FEN;
+            core::ptr::write_volatile(lcrh_ptr, LCRH_WLEN_8 | LCRH_FEN);
 
             // Clear all pending interrupts
-            regs.icr = 0x07FF;
+            let icr_ptr = core::ptr::addr_of_mut!((*self.regs).icr);
+            core::ptr::write_volatile(icr_ptr, 0x07FF);
 
             // Enable receive interrupt at 7/8 FIFO level
-            regs.imsc = IMSC_RXIM;
-            regs.ifls = IFLS_RXIFLSEL_7_8;
+            let imsc_ptr = core::ptr::addr_of_mut!((*self.regs).imsc);
+            let ifls_ptr = core::ptr::addr_of_mut!((*self.regs).ifls);
+            core::ptr::write_volatile(imsc_ptr, IMSC_RXIM);
+            core::ptr::write_volatile(ifls_ptr, IFLS_RXIFLSEL_7_8);
 
             // Enable UART, transmitter, and receiver
-            regs.cr = CR_UARTEN | CR_TXE | CR_RXE;
+            core::ptr::write_volatile(cr_ptr, CR_UARTEN | CR_TXE | CR_RXE);
         }
 
         self.initialized = true;
@@ -121,14 +130,15 @@ impl Pl011 {
     #[inline]
     pub fn write_byte(&self, byte: u8) {
         unsafe {
-            let regs = &mut *self.regs;
+            let fr_ptr = core::ptr::addr_of!((*self.regs).fr);
+            let dr_ptr = core::ptr::addr_of_mut!((*self.regs).dr);
 
             // Wait for TX FIFO to have space
-            while (regs.fr & FR_TXFF) != 0 {
+            while (core::ptr::read_volatile(fr_ptr) & FR_TXFF) != 0 {
                 core::hint::spin_loop();
             }
 
-            regs.dr = byte as u32;
+            core::ptr::write_volatile(dr_ptr, byte as u32);
         }
     }
 
@@ -147,14 +157,15 @@ impl Pl011 {
     /// Returns the received byte
     pub fn read_byte(&self) -> u8 {
         unsafe {
-            let regs = &*self.regs;
+            let fr_ptr = core::ptr::addr_of!((*self.regs).fr);
+            let dr_ptr = core::ptr::addr_of!((*self.regs).dr);
 
             // Wait for data to be available
-            while (regs.fr & FR_RXFE) != 0 {
+            while (core::ptr::read_volatile(fr_ptr) & FR_RXFE) != 0 {
                 core::hint::spin_loop();
             }
 
-            (regs.dr & 0xFF) as u8
+            (core::ptr::read_volatile(dr_ptr) & 0xFF) as u8
         }
     }
 
@@ -163,12 +174,13 @@ impl Pl011 {
     /// Returns `Some(byte)` if data is available, `None` otherwise
     pub fn try_read_byte(&self) -> Option<u8> {
         unsafe {
-            let regs = &*self.regs;
+            let fr_ptr = core::ptr::addr_of!((*self.regs).fr);
+            let dr_ptr = core::ptr::addr_of!((*self.regs).dr);
 
-            if (regs.fr & FR_RXFE) != 0 {
+            if (core::ptr::read_volatile(fr_ptr) & FR_RXFE) != 0 {
                 None
             } else {
-                Some((regs.dr & 0xFF) as u8)
+                Some((core::ptr::read_volatile(dr_ptr) & 0xFF) as u8)
             }
         }
     }
@@ -176,7 +188,10 @@ impl Pl011 {
     /// Check if the UART is busy transmitting
     #[inline]
     pub fn is_busy(&self) -> bool {
-        unsafe { ((*self.regs).fr & FR_BUSY) != 0 }
+        unsafe {
+            let fr_ptr = core::ptr::addr_of!((*self.regs).fr);
+            (core::ptr::read_volatile(fr_ptr) & FR_BUSY) != 0
+        }
     }
 
     /// Calculate integer and fractional baud rate divisors

@@ -1,6 +1,6 @@
 use common::arch::arm::irq::ArmIrq;
 use common::sync::IrqSpinLock;
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
 
 /// Base physical address of the system timer peripheral.
 ///
@@ -77,12 +77,14 @@ struct TimerRegisters {
 
 impl TimerRegisters {
     /// Get a pointer to the compare register for the given channel
-    fn compare_reg(&mut self, channel: TimerChannel) -> *mut u32 {
-        match channel {
-            TimerChannel::Channel0 => &mut self.c0 as *mut u32,
-            TimerChannel::Channel1 => &mut self.c1 as *mut u32,
-            TimerChannel::Channel2 => &mut self.c2 as *mut u32,
-            TimerChannel::Channel3 => &mut self.c3 as *mut u32,
+    unsafe fn compare_reg_ptr(base: *mut TimerRegisters, channel: TimerChannel) -> *mut u32 {
+        unsafe {
+            match channel {
+                TimerChannel::Channel0 => addr_of_mut!((*base).c0),
+                TimerChannel::Channel1 => addr_of_mut!((*base).c1),
+                TimerChannel::Channel2 => addr_of_mut!((*base).c2),
+                TimerChannel::Channel3 => addr_of_mut!((*base).c3),
+            }
         }
     }
 }
@@ -146,16 +148,17 @@ impl Timer {
         let _guard = self.channel_locks[channel as usize].lock();
 
         unsafe {
-            let r = &mut *self.regs;
+            let clo_ptr = addr_of!((*self.regs).clo);
+            let cs_ptr = addr_of_mut!((*self.regs).cs);
+            let compare_reg = TimerRegisters::compare_reg_ptr(self.regs, channel);
 
             // Read current timer value
-            let now = read_volatile(&r.clo);
+            let now = read_volatile(clo_ptr);
 
             // Clear any pending match (write-1-to-clear)
-            write_volatile(&mut r.cs, channel.as_bitmask());
+            write_volatile(cs_ptr, channel.as_bitmask());
 
             // Program compare value
-            let compare_reg = r.compare_reg(channel);
             write_volatile(compare_reg, now.wrapping_add(interval_us));
         }
     }
@@ -163,7 +166,8 @@ impl Timer {
     /// Clear all pending interrupts.
     pub fn clear_interrupt(&self) {
         unsafe {
-            let cs = read_volatile(&(*self.regs).cs);
+            let cs_ptr = addr_of!((*self.regs).cs);
+            let cs = read_volatile(cs_ptr);
 
             for i in 0..4 {
                 if (cs & (1 << i)) != 0 {
@@ -187,7 +191,8 @@ impl Timer {
     pub fn clear_interrupt_channel(&self, channel: TimerChannel) {
         let _guard = self.channel_locks[channel as usize].lock();
         unsafe {
-            write_volatile(&mut (*self.regs).cs, channel.as_bitmask());
+            let cs_ptr = addr_of_mut!((*self.regs).cs);
+            write_volatile(cs_ptr, channel.as_bitmask());
         }
     }
 }
