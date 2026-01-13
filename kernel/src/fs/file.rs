@@ -1,6 +1,3 @@
-pub mod uart_file;
-pub use uart_file::UartFile;
-
 use super::fd::FdError;
 
 /// File operations trait

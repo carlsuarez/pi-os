@@ -1,6 +1,8 @@
-use super::file::{File, SeekWhence, UartFile};
+use super::dev::UartFile;
+use super::file::{File, SeekWhence};
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt;
+use drivers::uart::UART0;
 
 /// File descriptor number (index into process's fd table)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -13,6 +15,10 @@ impl Fd {
     pub const STDOUT: Fd = Fd(1);
     /// Standard error
     pub const STDERR: Fd = Fd(2);
+
+    pub fn is_standard(self) -> bool {
+        self == Fd::STDIN || self == Fd::STDOUT || self == Fd::STDERR
+    }
 }
 
 /// A file descriptor entry in a process's file descriptor table
@@ -21,16 +27,19 @@ pub struct FileDescriptor {
     file: Arc<dyn File>,
     /// Flags (close-on-exec, etc.)
     flags: FdFlags,
+    /// Access mode (rd, wr, etc.)
+    access: AccessMode,
     /// Current file offset (for seekable files)
     offset: usize,
 }
 
 impl FileDescriptor {
     /// Create a new file descriptor
-    pub fn new(file: Arc<dyn File>, flags: FdFlags) -> Self {
+    pub fn new(file: Arc<dyn File>, flags: FdFlags, access: AccessMode) -> Self {
         Self {
             file,
             flags,
+            access,
             offset: 0,
         }
     }
@@ -81,6 +90,11 @@ impl FileDescriptor {
         self.flags
     }
 
+    /// Get access mode
+    pub fn access(&self) -> AccessMode {
+        self.access
+    }
+
     /// Set close-on-exec flag
     pub fn set_cloexec(&mut self, enabled: bool) {
         self.flags.set(FdFlags::CLOEXEC, enabled);
@@ -122,6 +136,34 @@ impl FdFlags {
     }
 }
 
+/// Access mode
+#[derive(Debug, Clone, Copy)]
+pub struct AccessMode {
+    pub read: bool,
+    pub write: bool,
+    pub append: bool,
+}
+
+impl AccessMode {
+    pub const fn default() -> Self {
+        Self {
+            read: false,
+            write: false,
+            append: false,
+        }
+    }
+
+    pub fn set_readable(&mut self, flag: bool) {
+        self.read = flag;
+    }
+    pub fn set_writeable(&mut self, flag: bool) {
+        self.write = flag;
+    }
+    pub fn set_appendable(&mut self, flag: bool) {
+        self.append = flag;
+    }
+}
+
 /// Per-process file descriptor table
 pub struct FileDescriptorTable {
     fds: Vec<Option<FileDescriptor>>,
@@ -138,9 +180,33 @@ impl FileDescriptorTable {
 
         // Initialize standard streams
         // For now, use UART for all three
-        let stdin = FileDescriptor::new(Arc::new(UartFile), FdFlags::NONE);
-        let stdout = FileDescriptor::new(Arc::new(UartFile), FdFlags::NONE);
-        let stderr = FileDescriptor::new(Arc::new(UartFile), FdFlags::NONE);
+        let stdin = FileDescriptor::new(
+            Arc::new(UartFile::new(&UART0)),
+            FdFlags::NONE,
+            AccessMode {
+                read: true,
+                write: true,
+                append: false,
+            },
+        );
+        let stdout = FileDescriptor::new(
+            Arc::new(UartFile::new(&UART0)),
+            FdFlags::NONE,
+            AccessMode {
+                read: true,
+                write: true,
+                append: false,
+            },
+        );
+        let stderr = FileDescriptor::new(
+            Arc::new(UartFile::new(&UART0)),
+            FdFlags::NONE,
+            AccessMode {
+                read: true,
+                write: true,
+                append: false,
+            },
+        );
 
         table.fds.push(Some(stdin));
         table.fds.push(Some(stdout));
@@ -150,18 +216,24 @@ impl FileDescriptorTable {
     }
 
     /// Allocate a new file descriptor
-    pub fn alloc(&mut self, file: Arc<dyn File>, flags: FdFlags) -> Result<Fd, FdError> {
+    pub fn alloc(
+        &mut self,
+        file: Arc<dyn File>,
+        flags: FdFlags,
+        access: AccessMode,
+    ) -> Result<Fd, FdError> {
         // Try to find a free slot
         for (i, slot) in self.fds.iter_mut().enumerate() {
             if slot.is_none() {
-                *slot = Some(FileDescriptor::new(file, flags));
+                *slot = Some(FileDescriptor::new(file, flags, access));
                 return Ok(Fd(i));
             }
         }
 
         // No free slots, append
         let fd = Fd(self.fds.len());
-        self.fds.push(Some(FileDescriptor::new(file, flags)));
+        self.fds
+            .push(Some(FileDescriptor::new(file, flags, access)));
         Ok(fd)
     }
 
@@ -200,8 +272,9 @@ impl FileDescriptorTable {
         let fd_entry = self.get(oldfd)?;
         let file = fd_entry.file().clone();
         let flags = fd_entry.flags();
+        let access = fd_entry.access();
 
-        self.alloc(file, flags)
+        self.alloc(file, flags, access)
     }
 
     /// Duplicate a file descriptor to a specific fd number
@@ -214,6 +287,7 @@ impl FileDescriptorTable {
         let fd_entry = self.get(oldfd)?;
         let file = fd_entry.file().clone();
         let flags = fd_entry.flags();
+        let access = fd_entry.access();
 
         // Close newfd if it's open
         if newfd.0 < self.fds.len() && self.fds[newfd.0].is_some() {
@@ -226,7 +300,7 @@ impl FileDescriptorTable {
         }
 
         // Set the new fd
-        self.fds[newfd.0] = Some(FileDescriptor::new(file, flags));
+        self.fds[newfd.0] = Some(FileDescriptor::new(file, flags, access));
         Ok(newfd)
     }
 

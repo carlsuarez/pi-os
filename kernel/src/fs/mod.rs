@@ -1,31 +1,47 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 
+use crate::fs::file::File;
+
+pub mod block_device;
+pub use block_device::BlockDevice;
+pub mod dev;
 pub mod fat;
 pub mod fd;
 pub mod file;
+pub mod vfs;
+
+pub enum FsError {
+    NotFound,
+    AlreadyExists,
+    NotADirectory,
+    IsADirectory,
+    PermissionDenied,
+    IoError,
+    Unknown,
+}
 
 pub trait FileSystem: Send + Sync {
     /// Open a file
-    fn open(&self, path: &str, flags: file::OpenFlags) -> Result<fd::Fd, &'static str>;
+    fn open(&self, path: &str) -> Result<Arc<dyn File>, FsError>;
 
     /// Create a file
-    fn create(&self, path: &str, flags: file::OpenFlags) -> Result<fd::Fd, &'static str>;
+    fn create(&self, path: &str) -> Result<Arc<dyn File>, FsError>;
 
     /// Delete a file
-    fn delete(&self, path: &str) -> Result<(), &'static str>;
+    fn delete(&self, path: &str) -> Result<(), FsError>;
 
     /// Get file statistics
-    fn stat(&self, path: &str) -> Result<file::FileStat, &'static str>;
+    fn stat(&self, path: &str) -> Result<file::FileStat, FsError>;
 
     /// List directory contents
-    fn ls(&self, path: &str) -> Result<Vec<String>, &'static str>;
+    fn ls(&self, path: &str) -> Result<Vec<String>, FsError>;
 
     /// Make a directory
-    fn mkdir(&self, path: &str) -> Result<(), &'static str>;
+    fn mkdir(&self, path: &str) -> Result<(), FsError>;
 
     /// Remove a directory
-    fn rmdir(&self, path: &str) -> Result<(), &'static str>;
+    fn rmdir(&self, path: &str) -> Result<(), FsError>;
 
     /// Mount the filesystem
-    fn mount(&self) -> Result<(), &'static str>;
+    fn mount(&self) -> Result<(), FsError>;
 }

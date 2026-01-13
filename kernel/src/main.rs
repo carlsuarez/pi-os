@@ -30,7 +30,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
     // Initialize UART0
-    init_uart0(115200).expect("Failed to initialize UART0\n");
+    init_uart(&UART0, 115200).expect("Failed to initialize UART0\n");
 
     // Initialize page allocator and heap (FIRST AND ONLY TIME)
     unsafe {
