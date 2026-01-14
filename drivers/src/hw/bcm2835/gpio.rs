@@ -112,10 +112,7 @@ struct GpioRegs {
 /// Provides safe, typed accessors for configuring and controlling
 /// GPIO pins. All hardware interaction is performed using volatile
 /// memory accesses.
-pub struct Gpio {
-    /// Pointer to the memory-mapped GPIO register block.
-    regs: *mut GpioRegs,
-}
+pub struct Gpio;
 
 #[inline(always)]
 fn regs() -> *mut GpioRegs {
@@ -138,7 +135,7 @@ impl Gpio {
     ///
     /// This updates the appropriate `GPFSELn` register to set the pin
     /// as an input, output, or alternate function.
-    pub fn set_function(&self, pin: u8, func: FuncSelect) -> Result<(), GpioError> {
+    pub fn set_function(pin: u8, func: FuncSelect) -> Result<(), GpioError> {
         Self::check_pin(pin)?;
 
         let reg = (pin / 10) as usize;
@@ -159,7 +156,7 @@ impl Gpio {
     /// Drive a GPIO pin high.
     ///
     /// The pin must be configured as an output for this to have an effect.
-    pub fn set(&self, pin: u8) -> Result<(), GpioError> {
+    pub fn set(pin: u8) -> Result<(), GpioError> {
         Self::check_pin(pin)?;
 
         let reg = (pin / 32) as usize;
@@ -176,7 +173,7 @@ impl Gpio {
     /// Drive a GPIO pin low.
     ///
     /// The pin must be configured as an output for this to have an effect.
-    pub fn clear(&self, pin: u8) -> Result<(), GpioError> {
+    pub fn clear(pin: u8) -> Result<(), GpioError> {
         Self::check_pin(pin)?;
 
         let reg = (pin / 32) as usize;
@@ -194,7 +191,7 @@ impl Gpio {
     ///
     /// Returns [`PinLevel::High`] if the pin is asserted, otherwise
     /// [`PinLevel::Low`].
-    pub fn level(&self, pin: u8) -> Result<PinLevel, GpioError> {
+    pub fn level(pin: u8) -> Result<PinLevel, GpioError> {
         Self::check_pin(pin)?;
 
         let reg = (pin / 32) as usize;
@@ -219,7 +216,7 @@ impl Gpio {
     /// 2. Wait for the control signal to settle.
     /// 3. Clock the setting into the target pin via `GPPUDCLK`.
     /// 4. Clear both registers.
-    pub fn set_pull(&self, pin: u8, pull: Pull) -> Result<(), GpioError> {
+    pub fn set_pull(pin: u8, pull: Pull) -> Result<(), GpioError> {
         Self::check_pin(pin)?;
 
         let reg = (pin / 32) as usize;
@@ -245,7 +242,7 @@ impl Gpio {
     /// Return the event status of a gpio pin
     ///
     /// Returns `true` if the event bit is set, otherwise `false`.  
-    pub fn event_status(&self, pin: u8) -> Result<bool, GpioError> {
+    pub fn event_status(pin: u8) -> Result<bool, GpioError> {
         Self::check_pin(pin)?;
 
         let reg = (pin / 32) as usize;
@@ -258,7 +255,7 @@ impl Gpio {
         }
     }
 
-    pub fn clear_event(&self, pin: u8) -> Result<(), GpioError> {
+    pub fn clear_event(pin: u8) -> Result<(), GpioError> {
         Self::check_pin(pin)?;
 
         let reg = (pin / 32) as usize;
