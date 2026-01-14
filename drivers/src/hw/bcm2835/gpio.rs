@@ -72,25 +72,33 @@ struct GpioRegs {
     gplev: [u32; 2],
     _reserved3: u32,
 
+    /// GPIO Pin Event Detect Status
+    gped: [u32; 2],
+    _reserved4: u32,
+
     /// GPIO Pin Rising Edge Detect Enable registers.
     gpren: [u32; 2],
-    _reserved4: u32,
+    _reserved5: u32,
 
     /// GPIO Pin Falling Edge Detect Enable registers.
     gpfen: [u32; 2],
-    _reserved5: u32,
+    _reserved6: u32,
 
     /// GPIO Pin High Detect Enable registers.
     gphen: [u32; 2],
-    _reserved6: u32,
+    _reserved7: u32,
 
     /// GPIO Pin Low Detect Enable registers.
     gplen: [u32; 2],
-    _reserved7: u32,
+    _reserved8: u32,
 
     /// GPIO Pin Asynchronous Rising Edge Detect Enable registers.
     gparen: [u32; 2],
-    _reserved8: u32,
+    _reserved9: u32,
+
+    /// GPIO Pin Asynchronous Falling Edge Detect Enable registers.
+    gpafen: [u32; 2],
+    _reserved10: u32,
 
     /// GPIO Pull-up/down Enable register.
     gppud: u32,
@@ -109,19 +117,12 @@ pub struct Gpio {
     regs: *mut GpioRegs,
 }
 
-impl Gpio {
-    /// Create a new GPIO controller instance.
-    ///
-    /// # Safety
-    /// The caller must ensure that `base` is the correct physical or
-    /// virtual address of the GPIO register block and that it is
-    /// valid for the lifetime of this object.
-    pub const unsafe fn new(base: usize) -> Self {
-        Self {
-            regs: base as *mut GpioRegs,
-        }
-    }
+#[inline(always)]
+fn regs() -> *mut GpioRegs {
+    GPIO_BASE as *mut GpioRegs
+}
 
+impl Gpio {
     /// Validate that a GPIO pin number is in range.
     ///
     /// The BCM2835 exposes GPIO pins 0–53.
@@ -145,7 +146,7 @@ impl Gpio {
         let mask = 0b111 << shift;
 
         unsafe {
-            let fsel_ptr = addr_of!((*self.regs).gpfsel).cast::<u32>().add(reg);
+            let fsel_ptr = addr_of!((*regs()).gpfsel).cast::<u32>().add(reg);
 
             let fsel = read_volatile(fsel_ptr);
             let new = (fsel & !mask) | ((func as u32) << shift);
@@ -165,8 +166,8 @@ impl Gpio {
         let bit = 1u32 << (pin % 32);
 
         unsafe {
-            let gpset_ptr = addr_of!((*self.regs).gpset).cast::<u32>().add(reg);
-            write_volatile(gpset_ptr as *mut u32, bit);
+            let gpset = addr_of_mut!((*regs()).gpset).cast::<u32>().add(reg);
+            write_volatile(gpset, bit);
         }
 
         Ok(())
@@ -182,8 +183,8 @@ impl Gpio {
         let bit = 1u32 << (pin % 32);
 
         unsafe {
-            let gpclr_ptr = addr_of!((*self.regs).gpclr).cast::<u32>().add(reg);
-            write_volatile(gpclr_ptr as *mut u32, bit);
+            let gpclr = addr_of_mut!((*regs()).gpclr).cast::<u32>().add(reg);
+            write_volatile(gpclr, bit);
         }
 
         Ok(())
@@ -200,10 +201,10 @@ impl Gpio {
         let bit = 1u32 << (pin % 32);
 
         unsafe {
-            let gplev_ptr = addr_of!((*self.regs).gplev).cast::<u32>().add(reg);
-            let val = read_volatile(gplev_ptr);
+            let gplev = addr_of!((*regs()).gplev).cast::<u32>().add(reg);
+            let gplev = read_volatile(gplev);
 
-            Ok(if val & bit != 0 {
+            Ok(if gplev & bit != 0 {
                 PinLevel::High
             } else {
                 PinLevel::Low
@@ -225,17 +226,116 @@ impl Gpio {
         let bit = 1u32 << (pin % 32);
 
         unsafe {
-            let gppud_ptr = addr_of_mut!((*self.regs).gppud);
-            let gppudclk_ptr = addr_of!((*self.regs).gppudclk).cast::<u32>().add(reg);
+            let gppud = addr_of_mut!((*regs()).gppud);
+            let gppudclk = addr_of!((*regs()).gppudclk).cast::<u32>().add(reg) as *mut u32;
 
-            write_volatile(gppud_ptr, pull as u32);
+            write_volatile(gppud, pull as u32);
             delay_cycles(150);
 
-            write_volatile(gppudclk_ptr as *mut u32, bit);
+            write_volatile(gppudclk, bit);
             delay_cycles(150);
 
-            write_volatile(gppud_ptr, 0);
-            write_volatile(gppudclk_ptr as *mut u32, 0);
+            write_volatile(gppud, 0);
+            write_volatile(gppudclk, 0);
+        }
+
+        Ok(())
+    }
+
+    /// Return the event status of a gpio pin
+    ///
+    /// Returns `true` if the event bit is set, otherwise `false`.  
+    pub fn event_status(&self, pin: u8) -> Result<bool, GpioError> {
+        Self::check_pin(pin)?;
+
+        let reg = (pin / 32) as usize;
+        let bit = 1u32 << (pin % 32);
+
+        unsafe {
+            let gped = addr_of!((*regs()).gped).cast::<u32>().add(reg);
+            let gped = read_volatile(gped as *mut u32);
+            Ok(gped & bit != 0)
+        }
+    }
+
+    pub fn clear_event(&self, pin: u8) -> Result<(), GpioError> {
+        Self::check_pin(pin)?;
+
+        let reg = (pin / 32) as usize;
+        let bit = 1u32 << (pin % 32);
+
+        unsafe {
+            let gped = addr_of_mut!((*regs()).gped).cast::<u32>().add(reg);
+            write_volatile(gped, bit);
+        }
+
+        Ok(())
+    }
+
+    /// Configure event detection for a GPIO pin.
+    ///
+    /// Enables or disables event detection on a GPIO pin for the specified event type.
+    /// Supported event types include rising edge, falling edge, high level, low level,
+    /// asynchronous rising edge, and asynchronous falling edge detection.
+    ///
+    /// # Arguments
+    /// * `pin` - The GPIO pin number (0–53)
+    /// * `event` - The type of event to detect
+    /// * `enable` - `true` to enable event detection, `false` to disable
+    ///
+    /// # Returns
+    /// * `Ok(())` if the event detection was successfully configured
+    /// * `Err(GpioError::BadPin)` if the pin number is invalid
+    pub fn configure_event_detect(
+        &self,
+        pin: u8,
+        event: Event,
+        enable: bool,
+    ) -> Result<(), GpioError> {
+        Self::check_pin(pin)?;
+
+        let reg = (pin / 32) as usize;
+        let bit = 1u32 << (pin % 32);
+
+        unsafe {
+            match event {
+                Event::Rising => {
+                    let gpren = addr_of!((*regs()).gpren).cast::<u32>().add(reg);
+                    let val = read_volatile(gpren);
+                    let val = if enable { val | bit } else { val & !bit };
+                    write_volatile(gpren as *mut u32, val);
+                }
+                Event::Falling => {
+                    let gpfen = addr_of!((*regs()).gpfen).cast::<u32>().add(reg);
+                    let val = read_volatile(gpfen);
+                    let val = if enable { val | bit } else { val & !bit };
+                    write_volatile(gpfen as *mut u32, val);
+                }
+                Event::High => {
+                    let gphen = addr_of!((*regs()).gphen).cast::<u32>().add(reg);
+                    let val = read_volatile(gphen);
+                    let val = if enable { val | bit } else { val & !bit };
+                    write_volatile(gphen as *mut u32, val);
+                }
+                Event::Low => {
+                    let gplen = addr_of!((*regs()).gplen).cast::<u32>().add(reg);
+                    let val = read_volatile(gplen);
+                    let val = if enable { val | bit } else { val & !bit };
+                    write_volatile(gplen as *mut u32, val);
+                }
+                Event::AsyncRising => {
+                    let gparen = addr_of!((*regs()).gparen).cast::<u32>().add(reg);
+                    let val = read_volatile(gparen);
+                    let val = if enable { val | bit } else { val & !bit };
+                    write_volatile(gparen as *mut u32, val);
+                }
+                Event::AsyncFalling => {
+                    let gpafen = addr_of!((*regs()).gpafen).cast::<u32>().add(reg);
+                    let val = read_volatile(gpafen);
+                    let val = if enable { val | bit } else { val & !bit };
+                    write_volatile(gpafen as *mut u32, val);
+                }
+            }
         }
 
         Ok(())
@@ -256,6 +356,23 @@ pub enum PinLevel {
     Low,
     /// Logic high (1).
     High,
+}
+
+///
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// Synchronous rising edge
+    Rising,
+    /// Synchronous falling edge
+    Falling,
+    /// Logic level low
+    Low,
+    /// Logic level high
+    High,
+    /// Asynchronous rising
+    AsyncRising,
+    /// Asynchronous falling
+    AsyncFalling,
 }
 
 /// Simple busy-wait delay loop.
