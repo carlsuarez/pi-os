@@ -1,7 +1,7 @@
 use crate::mm::page_table::{L1Table, L2Table};
 use common::sync::SpinLock;
 use core::ptr;
-use drivers::hw::bcm2835::PERIPHERAL_BASE;
+use drivers::platform::{CurrentPlatform, Platform};
 
 /// Error types for MMU operations
 #[derive(Debug, Clone, Copy)]
@@ -168,25 +168,28 @@ pub unsafe extern "C" fn init_kernel_page_table() {
             ptr::write_volatile(l1.add(i), 0);
         }
 
-        // Map entire first 256MB as normal memory (covers kernel, stacks, etc.)
-        let (base, size) = drivers::hw::bcm2835::firmware_memory::get_arm_memory()
-            .expect("Failed to get ARM memory from firmware\n");
-        for i in base..(base + size) / SECTION_SIZE {
-            let addr = i * SECTION_SIZE;
+        let mm = CurrentPlatform::memory_map();
+
+        // Map kernel RAM as normal memory
+        let ram_end = mm.ram_start + mm.ram_size;
+        let mut addr = mm.ram_start & SECTION_MASK;
+        while addr < ram_end {
             ptr::write_volatile(
                 l1.add(l1_index(addr)),
                 section_entry_normal(addr, AP_PRIV_RW, DOMAIN_KERNEL),
             );
+            addr += SECTION_SIZE;
         }
 
-        // Identity map hardware sections as Device memory
-        // Map entire peripheral region (0x20000000 - 0x20FFFFFF, 16MB)
-        for i in 0..16 {
-            let addr = PERIPHERAL_BASE + (i * SECTION_SIZE);
+        // Map peripheral space as device memory
+        let periph_end = mm.peripheral_base + mm.peripheral_size;
+        addr = mm.peripheral_base & SECTION_MASK;
+        while addr < periph_end {
             ptr::write_volatile(
                 l1.add(l1_index(addr)),
                 section_entry_device(addr, AP_PRIV_RW, DOMAIN_HW),
             );
+            addr += SECTION_SIZE;
         }
     }
 }

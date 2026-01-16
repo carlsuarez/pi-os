@@ -1,9 +1,12 @@
+//! Kernel Main Entry Point
+//!
+
 #![no_std]
 #![no_main]
-#![allow(dead_code)]
 #![feature(alloc_error_handler)]
-
+#[allow(dead_code)]
 extern crate alloc;
+
 mod arch;
 mod fs;
 mod irq;
@@ -11,98 +14,156 @@ mod kcore;
 mod mm;
 mod process;
 mod syscall;
-use crate::irq::handlers;
-use crate::mm::heap_allocator;
-use crate::mm::page_allocator::PAGE_ALLOCATOR;
-use common::arch::arm::bcm2835::irq::*;
-use core::panic::PanicInfo;
-use drivers::hw::bcm2835::timer::TimerChannel;
-use drivers::hw::bcm2835::{firmware_memory::get_arm_memory, interrupt};
-use drivers::{uart::*, uart_println};
 
-// Linker symbols
-unsafe extern "C" {
-    static mut _free_memory_start: u8;
-    static mut _kernel_heap_start: u8;
-    static mut _kernel_heap_end: u8;
-}
+use crate::irq::handlers;
+use crate::mm::page_allocator::PAGE_ALLOCATOR;
+use core::panic::PanicInfo;
+use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
+
+// ============================================================================
+// Kernel Entry Point
+// ============================================================================
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    // Initialize UART0
-    init_uart(&UART0, 115200).expect("Failed to initialize UART0\n");
+    kprintln!("========================================");
+    kprintln!("Booting {} kernel", Platform::name());
+    kprintln!("========================================");
 
-    // Initialize page allocator and heap (FIRST AND ONLY TIME)
-    unsafe {
-        let free_mem_start = core::ptr::addr_of!(_free_memory_start) as usize;
-        let (base, size) = get_arm_memory().expect("Failed to get ARM memory from firmware\n");
-        PAGE_ALLOCATOR.init(free_mem_start, base + size);
+    // Test Memory Allocators
+    test_memory_allocators();
 
-        let heap_start = core::ptr::addr_of!(_kernel_heap_start) as usize;
-        let heap_end = core::ptr::addr_of!(_kernel_heap_end) as usize;
-        heap_allocator::init_heap(heap_start, heap_end);
-    }
+    // Setup Interrupt Handlers
+    let timer_irq = Platform::timer_irq();
+    handlers::register(timer_irq, handlers::timer);
+    kprintln!("Registered timer interrupt handler (IRQ {})", timer_irq);
 
-    let page = PAGE_ALLOCATOR
-        .alloc()
-        .expect("Failed to allocate test page\n");
+    // Enable Interrupts
+    Platform::enable_irq(timer_irq);
+    kprintln!("Enabled timer interrupt");
 
-    uart_println!("Allocated test page at address: {:#X}", page.addr());
-    let page_ptr = page.addr() as *mut u8;
-    unsafe {
-        core::ptr::write_bytes(page_ptr, 0xAB, 4096);
-        for i in 0..16 {
-            uart_println!("Byte {}: {:#X}", i, *page_ptr.add(i));
-        }
-    }
+    crate::arch::arm::interrupt::enable();
+    kprintln!("Enabled CPU interrupts");
 
-    test_heap_allocations();
+    //: Start System Timer
+    Platform::timer_start(1_000_000); // 1 second interval
+    kprintln!("Started system timer (1 second interval)");
 
-    interrupt::enable_irq(IRQ_SYSTEM_TIMER_1); // Enable timer IRQ
+    // Kernel is now fully initialized
+    kprintln!("========================================");
+    kprintln!("Kernel initialization complete!");
+    kprintln!("Platform: {}", Platform::name());
+    kprintln!("Entering main loop...");
+    kprintln!("========================================");
 
-    handlers::register(IRQ_SYSTEM_TIMER_1, handlers::timer);
-
-    crate::arch::arm::interrupt::enable(); // Enable IRQs
-
-    drivers::hw::bcm2835::timer::timer().start(TimerChannel::Channel1, 1000000); // 1 second
-
-    uart_println!("Kernel initialized successfully!");
-    loop {}
+    // Main kernel loop
+    kernel_main_loop();
 }
 
-fn test_heap_allocations() {
+// ============================================================================
+// Kernel Main Loop
+// ============================================================================
+
+fn kernel_main_loop() -> ! {
+    loop {
+        // Wait for interrupt
+        crate::arch::arm::wfi();
+
+        // Process pending work here
+        // - Schedule processes
+        // - Handle deferred work
+        // - etc.
+    }
+}
+
+// ============================================================================
+// Memory Allocator Tests
+// ============================================================================
+
+fn test_memory_allocators() {
     use alloc::boxed::Box;
     use alloc::string::String;
     use alloc::vec::Vec;
 
-    uart_println!("Testing heap allocations...");
+    kprintln!("Testing memory allocators...");
 
-    // Test Vec
+    // Test page allocator
+    let page = PAGE_ALLOCATOR.alloc().expect("Failed to allocate page");
+    kprintln!("  Page allocator: allocated page at 0x{:X}", page.addr());
+
+    let page_ptr = page.addr() as *mut u8;
+    unsafe {
+        core::ptr::write_bytes(page_ptr, 0xAB, 16);
+        kprint!("  First 16 bytes: ");
+        for i in 0..16 {
+            kprint!("{:02X} ", *page_ptr.add(i));
+        }
+        kprintln!();
+    }
+
+    // Test heap allocator - Vec
     let mut v = Vec::new();
     v.push(1);
     v.push(2);
     v.push(3);
-    uart_println!("Vec works! {:?}", v);
+    kprintln!("  Heap allocator (Vec): {:?}", v);
 
-    // Test String
+    // Test heap allocator - String
     let mut s = String::from("Hello ");
     s.push_str("from heap!");
-    uart_println!("String works! {}", s);
+    kprintln!("  Heap allocator (String): {}", s);
 
-    // Test Box
+    // Test heap allocator - Box
     let boxed = Box::new(42);
-    uart_println!("Box works! {}", *boxed);
+    kprintln!("  Heap allocator (Box): {}", *boxed);
 
     // Test collections
     let numbers: Vec<u32> = (0..10).collect();
-    uart_println!("Range collection works! len={}", numbers.len());
+    kprintln!("  Heap allocator (Range): {} elements", numbers.len());
 
-    uart_println!("All heap tests passed!");
+    kprintln!("All memory tests passed");
 }
 
-// Required panic handler
+// ============================================================================
+// Panic Handler
+// ============================================================================
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    uart_println!("Kernel panic: {}", info);
-    loop {}
+    kprintln!();
+    kprintln!("========================================");
+    kprintln!("KERNEL PANIC!");
+    kprintln!("========================================");
+    kprintln!("{}", info);
+    kprintln!("========================================");
+    kprintln!("System halted.");
+
+    loop {
+        crate::arch::arm::wfi();
+    }
+}
+
+// ============================================================================
+// Print Macros
+// ============================================================================
+
+/// Print to console without newline
+#[macro_export]
+macro_rules! kprint {
+    ($($arg:tt)*) => {{
+        use alloc::format;
+        use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
+        let s = format!($($arg)*);
+        Platform::console_write(&s);
+    }};
+}
+
+/// Print to console with newline
+#[macro_export]
+macro_rules! kprintln {
+    () => { $crate::kprint!("\n") };
+    ($($arg:tt)*) => {{
+        $crate::kprint!($($arg)*);
+        $crate::kprint!("\n");
+    }};
 }

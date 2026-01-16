@@ -10,6 +10,6 @@ qemu-system-arm \
     -kernel "$KERNEL_ELF" \
     -nographic \
     -D qemu.log \
-    -d int,guest_errors \
+    -d int,guest_errors,cpu,exec \
     -S \
     -s

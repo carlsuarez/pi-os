@@ -66,6 +66,9 @@ zero_bss:
     mov r0, #0x40000000
     vmsr fpexc, r0
 
+    /* Initalize core */
+    bl kernel_init
+    
     /* Initialize kernel's L1 page table */
     bl init_kernel_page_table
 

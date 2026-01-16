@@ -1,11 +1,12 @@
-pub mod uart_file;
-
-use crate::fs::{FileSystem, FsError, file::File};
+use crate::fs::file::File;
+use crate::fs::{FileSystem, FsError};
+use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
-use drivers::uart::UART0;
+use drivers::platform::{CurrentPlatform, PlatformExt};
 pub use uart_file::UartFile;
+pub mod uart_file;
 
 pub struct DevFs;
 
@@ -17,42 +18,57 @@ impl DevFs {
 
 impl FileSystem for DevFs {
     fn open(&self, path: &str) -> Result<Arc<dyn File>, FsError> {
-        match path {
-            "/dev/uart0" => Ok(Arc::new(UartFile::new(&UART0))),
-            _ => Err(FsError::NotFound),
+        if path.starts_with("/dev/uart") {
+            if let Ok(index) = path[9..].parse::<usize>() {
+                return CurrentPlatform::with_uart(index, |_| {
+                    Ok(Arc::new(UartFile::new(index)) as Arc<dyn File>)
+                })
+                .ok_or(FsError::NotFound)
+                .and_then(|x| x);
+            }
         }
+
+        Err(FsError::NotFound)
+    }
+
+    fn ls(&self, _path: &str) -> Result<vec::Vec<String>, FsError> {
+        let mut devices = vec![];
+
+        let mut i = 0;
+        while CurrentPlatform::with_uart(i, |_| ()).is_some() {
+            devices.push(format!("uart{}", i));
+            i += 1;
+        }
+
+        Ok(devices)
     }
 
     fn create(&self, _path: &str) -> Result<Arc<dyn File>, FsError> {
         Err(FsError::PermissionDenied)
     }
-
     fn delete(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::PermissionDenied)
     }
-
     fn stat(&self, path: &str) -> Result<crate::fs::file::FileStat, FsError> {
-        match path {
-            "/dev/uart0" => Ok(crate::fs::file::FileStat {
-                size: 0,
-                is_dir: false,
-            }),
-            _ => Err(FsError::NotFound),
+        if path.starts_with("/dev/uart") {
+            let index = path[9..].parse::<usize>().ok();
+            if let Some(idx) = index {
+                if CurrentPlatform::with_uart(idx, |_| ()).is_some() {
+                    return Ok(crate::fs::file::FileStat {
+                        size: 0,
+                        is_dir: false,
+                    });
+                }
+            }
         }
+        Err(FsError::NotFound)
     }
-
-    fn ls(&self, _path: &str) -> Result<vec::Vec<String>, FsError> {
-        Ok(vec![String::from("uart0")])
-    }
-
     fn mkdir(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::PermissionDenied)
     }
-
     fn rmdir(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::PermissionDenied)
     }
-
     fn mount(&self) -> Result<(), FsError> {
         Ok(())
     }

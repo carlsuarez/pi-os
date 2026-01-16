@@ -1,6 +1,5 @@
 use crate::arch::arm::exception::TrapFrame;
-use drivers::{hw::bcm2835::timer::TimerChannel, uart_println};
-
+use drivers::platform::{CurrentPlatform, Platform};
 pub type IrqHandler = fn(&mut TrapFrame);
 
 const MAX_IRQS: usize = 128;
@@ -18,9 +17,9 @@ pub(crate) fn get_handler(irq: u32) -> Option<IrqHandler> {
 }
 
 pub fn timer(_tf: &mut TrapFrame) {
-    drivers::hw::bcm2835::timer::timer().clear_interrupt();
-    uart_println!("Timer interrupt");
-    drivers::hw::bcm2835::timer::timer().start(TimerChannel::Channel1, 1_000_000); // 1 second
+    CurrentPlatform::timer_clear();
+    crate::kprintln!("Timer interrupt");
+    CurrentPlatform::timer_start(1_000_000); // 1 second
 }
 
 pub fn uart(_tf: &mut TrapFrame) {}

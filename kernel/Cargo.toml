@@ -12,3 +12,8 @@ cfg-if = "1.0"
 name = "kernel"
 path = "src/main.rs"
 test = false
+
+[features]
+default = ["bcm2835"]
+bcm2835 = []
+bcm2711 = []

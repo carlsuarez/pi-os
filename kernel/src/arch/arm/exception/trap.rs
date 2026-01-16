@@ -1,3 +1,5 @@
+use drivers::platform::{CurrentPlatform, Platform};
+
 #[repr(C)]
 pub struct TrapFrame {
     pub spsr: u32,
@@ -19,7 +21,7 @@ pub struct TrapFrame {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn irq_entry_rust(tf: &mut TrapFrame) {
-    if let Some(irq) = drivers::hw::bcm2835::interrupt::pending_irq() {
+    if let Some(irq) = CurrentPlatform::next_pending_irq() {
         crate::irq::dispatch(irq, tf);
     }
 }

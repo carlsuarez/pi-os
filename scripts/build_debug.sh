@@ -31,6 +31,7 @@ done
 echo "[*] Building Rust kernel (debug)..."
 cargo +nightly rustc \
     --target "$RUST_TARGET_JSON" \
+    --features bcm2835 \
     -Z build-std=core,alloc,compiler_builtins \
     -Z build-std-features=compiler-builtins-mem \
     -p kernel \
