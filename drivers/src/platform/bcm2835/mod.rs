@@ -29,17 +29,14 @@ pub mod framebuffer;
 pub mod mailbox;
 
 use super::{MemoryMap, Platform};
+use crate::hal::{
+    gpio::{GpioController, PullMode},
+    interrupt::InterruptController,
+    serial::{NonBlockingSerial, SerialConfig, SerialPort},
+    timer::Timer,
+};
 use crate::peripheral::pl011::PL011;
 use crate::platform::bcm2835::timer::Channel;
-use crate::{
-    hal::{
-        gpio::{GpioController, PullMode},
-        interrupt::InterruptController,
-        serial::{NonBlockingSerial, SerialConfig, SerialPort},
-        timer::Timer,
-    },
-    platform::PlatformExt,
-};
 use common::arch::arm::bcm2835::irq::*;
 use common::sync::SpinLock;
 
@@ -175,12 +172,13 @@ impl Platform for Bcm2835Platform {
     fn timer_irq() -> u32 {
         IRQ_SYSTEM_TIMER_1
     }
-}
 
-impl PlatformExt for Bcm2835Platform {
-    fn with_uart<R>(index: usize, f: impl FnOnce(&mut PL011) -> R) -> Option<R> {
+    fn with_uart<R>(index: usize, f: impl FnOnce(&mut dyn SerialPort) -> R) -> Option<R> {
         match index {
-            0 => Some(f(CONSOLE.lock().as_mut()?)),
+            0 => {
+                let mut guard = CONSOLE.lock();
+                guard.as_mut().map(|u| f(u))
+            }
             _ => None,
         }
     }

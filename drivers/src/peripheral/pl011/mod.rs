@@ -113,9 +113,7 @@ impl PL011 {
 // ============================================================================
 
 impl SerialPort for PL011 {
-    type Error = SerialError;
-
-    fn configure(&mut self, config: SerialConfig) -> Result<(), Self::Error> {
+    fn configure(&mut self, config: SerialConfig) -> Result<(), SerialError> {
         // Validate configuration
         if !matches!(config.data_bits, DataBits::Eight) {
             return Err(SerialError::InvalidConfig);
@@ -162,7 +160,7 @@ impl SerialPort for PL011 {
         Ok(())
     }
 
-    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+    fn write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
         // Wait for TX FIFO to have space
         while self.read_reg(FR_OFFSET) & FR_TXFF != 0 {
             core::hint::spin_loop();
@@ -172,7 +170,7 @@ impl SerialPort for PL011 {
         Ok(())
     }
 
-    fn read_byte(&mut self) -> Result<u8, Self::Error> {
+    fn read_byte(&mut self) -> Result<u8, SerialError> {
         // Wait for data to be available
         while self.read_reg(FR_OFFSET) & FR_RXFE != 0 {
             core::hint::spin_loop();
@@ -181,7 +179,7 @@ impl SerialPort for PL011 {
         Ok((self.read_reg(0x00) & 0xFF) as u8)
     }
 
-    fn flush(&mut self) -> Result<(), Self::Error> {
+    fn flush(&mut self) -> Result<(), SerialError> {
         self.wait_idle();
         Ok(())
     }
@@ -189,10 +187,14 @@ impl SerialPort for PL011 {
     fn is_busy(&self) -> bool {
         self.read_reg(FR_OFFSET) & FR_BUSY != 0
     }
+
+    fn as_nonblocking(&mut self) -> Option<&mut dyn NonBlockingSerial> {
+        Some(self)
+    }
 }
 
 impl NonBlockingSerial for PL011 {
-    fn try_write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+    fn try_write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
         if self.read_reg(FR_OFFSET) & FR_TXFF != 0 {
             return Err(SerialError::WouldBlock);
         }
@@ -201,7 +203,7 @@ impl NonBlockingSerial for PL011 {
         Ok(())
     }
 
-    fn try_read_byte(&mut self) -> Result<u8, Self::Error> {
+    fn try_read_byte(&mut self) -> Result<u8, SerialError> {
         if self.read_reg(FR_OFFSET) & FR_RXFE != 0 {
             return Err(SerialError::WouldBlock);
         }

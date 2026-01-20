@@ -4,7 +4,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
-use drivers::platform::{CurrentPlatform, PlatformExt};
+use drivers::platform::{CurrentPlatform, Platform};
 pub use uart_file::UartFile;
 pub mod uart_file;
 

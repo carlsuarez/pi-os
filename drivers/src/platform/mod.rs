@@ -16,7 +16,7 @@
 //! Platform::timer_start(1_000_000);
 //! ```
 
-use crate::peripheral::pl011::PL011;
+use crate::hal::serial::SerialPort;
 
 /// Platform memory map information
 #[derive(Debug, Clone, Copy)]
@@ -110,11 +110,19 @@ pub trait Platform {
 
     /// Get timer IRQ number
     fn timer_irq() -> u32;
-}
 
-/// Extended platform trait for additional features
-pub trait PlatformExt: Platform {
-    fn with_uart<R>(index: usize, f: impl FnOnce(&mut PL011) -> R) -> Option<R>;
+    /// Access a UART by index
+    ///
+    /// Executes the closure with mutable access to the specified UART.
+    /// Returns None if the UART index is invalid.
+    ///
+    /// # Arguments
+    /// - `index`: UART index (0 = primary UART, 1+ = auxiliary UARTs if available)
+    /// - `f`: Closure that receives mutable reference to the UART
+    ///
+    /// # Safety
+    /// Caller must ensure the UART is properly initialized before use.
+    fn with_uart<R>(index: usize, f: impl FnOnce(&mut dyn SerialPort) -> R) -> Option<R>;
 }
 
 // Platform selection based on Cargo features

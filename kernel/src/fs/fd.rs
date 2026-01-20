@@ -120,14 +120,6 @@ pub struct AccessMode {
 }
 
 impl AccessMode {
-    pub const fn default() -> Self {
-        Self {
-            read: false,
-            write: false,
-            append: false,
-        }
-    }
-
     pub fn set_readable(&mut self, flag: bool) {
         self.read = flag;
     }
@@ -136,6 +128,16 @@ impl AccessMode {
     }
     pub fn set_appendable(&mut self, flag: bool) {
         self.append = flag;
+    }
+}
+
+impl Default for AccessMode {
+    fn default() -> Self {
+        Self {
+            read: false,
+            write: false,
+            append: false,
+        }
     }
 }
 
