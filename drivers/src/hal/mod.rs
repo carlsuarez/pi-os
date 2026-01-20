@@ -18,7 +18,9 @@
 //! - [`serial`]: Serial port (UART) communication
 //! - [`timer`]: Hardware timers and delays
 //! - [`interrupt`]: Interrupt controller management
+//! - [`block_device`]: Block storage device access
 
+pub mod block_device;
 pub mod gpio;
 pub mod interrupt;
 pub mod serial;

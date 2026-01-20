@@ -24,6 +24,7 @@ pub mod timer;
 pub use gpio::Bcm2835Gpio;
 pub use interrupt::Bcm2835InterruptController;
 pub use timer::Bcm2835Timer;
+pub mod emmc;
 pub mod framebuffer;
 pub mod mailbox;
 

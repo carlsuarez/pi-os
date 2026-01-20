@@ -2,8 +2,6 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 
 use crate::fs::file::File;
 
-pub mod block_device;
-pub use block_device::BlockDevice;
 pub mod dev;
 pub mod fat;
 pub mod fd;
