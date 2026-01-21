@@ -18,7 +18,7 @@ pub(crate) fn get_handler(irq: u32) -> Option<IrqHandler> {
 
 pub fn timer(_tf: &mut TrapFrame) {
     CurrentPlatform::timer_clear();
-    crate::kprintln!("Timer interrupt");
+    CurrentPlatform::console_write("Timer interrupt");
     CurrentPlatform::timer_start(1_000_000); // 1 second
 }
 

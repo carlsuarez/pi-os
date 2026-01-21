@@ -20,8 +20,6 @@
     .type _vectors, %function
 _vectors:
     .cfi_startproc
-    .loc 1 12 0
-
     ldr pc, reset_vec      @ 0x00 Reset
     ldr pc, undef_vec      @ 0x04 Undefined instruction
     ldr pc, svc_vec        @ 0x08 Supervisor call

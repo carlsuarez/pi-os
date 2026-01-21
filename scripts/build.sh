@@ -3,7 +3,7 @@ set -e
 
 WORKSPACE_ROOT="$(pwd)"
 BUILD_DIR="$WORKSPACE_ROOT/build"
-KERNEL_ELF="$WORKSPACE_ROOT/kernel.elf"
+KERNEL_ELF="$BUILD_DIR/kernel.elf"
 LINKER_SCRIPT="$WORKSPACE_ROOT/kernel/linker.ld"
 ASM_FILES=$(find "$WORKSPACE_ROOT/kernel" -name '*.S')
 RUST_TARGET_JSON="$WORKSPACE_ROOT/targets/armv6-none.json"
@@ -18,7 +18,7 @@ for f in $ASM_FILES; do
     ASM_OBJS+=("$OBJ")
 done
 
-echo "[*] Building Rust kernel..."
+echo "[*] Building Rust kernel (release)..."
 cargo +nightly rustc --release \
     --target "$RUST_TARGET_JSON" \
     --features bcm2835 \
@@ -33,4 +33,22 @@ cargo +nightly rustc --release \
 RUST_ELF="target/armv6-none/release/kernel"
 cp "$RUST_ELF" "$KERNEL_ELF"
 
-echo "[*] Build complete"
+echo "[*] Creating FAT32 test image..."
+IMG_FILE="$BUILD_DIR/rootfs.img"
+IMG_SIZE=64M
+TMP_MOUNT="$BUILD_DIR/tmp_mount"
+
+dd if=/dev/zero of="$IMG_FILE" bs=1M count=64
+mkfs.fat -F32 -n ROOTFS "$IMG_FILE"
+
+mkdir -p "$TMP_MOUNT"
+sudo mount -o loop "$IMG_FILE" "$TMP_MOUNT"
+
+# create a test file
+echo "Hello from QEMU FAT32!" | sudo tee "$TMP_MOUNT/test.txt" > /dev/null
+
+sudo umount "$TMP_MOUNT"
+rmdir "$TMP_MOUNT"
+
+echo "[*] Release build complete: $KERNEL_ELF"
+echo "[*] FAT32 image created: $IMG_FILE"

@@ -1,52 +1,95 @@
-use crate::fs::file::File;
+use crate::fs::file::{File, FileStat};
+use crate::fs::{FileSystem, FsError};
 
-use super::FileSystem;
-use super::FsError;
-use super::dev::DevFs;
-use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec;
+use alloc::vec::Vec;
 
+use common::sync::SpinLock;
+
+/// A mount point in the VFS.
 pub struct Mount {
-    pub prefix: &'static str,
-    pub fs: &'static dyn FileSystem,
+    pub prefix: String,
+    pub fs: Arc<dyn FileSystem>,
 }
-
-static mut MOUNTS: Option<&[Mount]> = None;
 
 static VFS: VirtFS = VirtFS::new();
 
-struct VirtFS;
+pub struct VirtFS {
+    mounts: SpinLock<Vec<Mount>>,
+}
 
 impl VirtFS {
     pub const fn new() -> Self {
-        Self
-    }
-
-    pub fn init(devfs: &'static DevFs) {
-        unsafe {
-            let mounts = vec![Mount {
-                prefix: "/dev",
-                fs: devfs,
-            }];
-            MOUNTS = Some(Box::leak(mounts.into_boxed_slice()));
+        Self {
+            mounts: SpinLock::new(Vec::new()),
         }
     }
 
+    /// Initialize with a root filesystem.
+    pub fn init(&'static self, rootfs: Arc<dyn FileSystem>) {
+        let mut mounts = self.mounts.lock();
+        mounts.clear();
+        mounts.push(Mount {
+            prefix: "/".into(),
+            fs: rootfs,
+        });
+    }
+
+    /// Mount a filesystem at a path.
+    pub fn mount_fs(&self, prefix: &str, fs: Arc<dyn FileSystem>) -> Result<(), FsError> {
+        let mut mounts = self.mounts.lock();
+
+        if mounts.iter().any(|m| m.prefix == prefix) {
+            return Err(FsError::AlreadyExists);
+        }
+
+        mounts.push(Mount {
+            prefix: prefix.into(),
+            fs,
+        });
+
+        Ok(())
+    }
+
+    /// Unmount a filesystem.
+    pub fn umount(&self, prefix: &str) -> Result<(), FsError> {
+        let mut mounts = self.mounts.lock();
+
+        let idx = mounts
+            .iter()
+            .position(|m| m.prefix == prefix)
+            .ok_or(FsError::NotFound)?;
+
+        mounts.remove(idx);
+        Ok(())
+    }
+
+    /// Dispatch a path to the filesystem with the longest matching mount prefix.
     fn dispatch<T, F>(&self, path: &str, f: F) -> Result<T, FsError>
     where
         F: Fn(&Mount, &str) -> Result<T, FsError>,
     {
-        let mounts = unsafe { MOUNTS.expect("vfs not initialized\n") };
+        let mounts = self.mounts.lock();
 
-        for mount in mounts {
-            if let Some(rest) = path.strip_prefix(mount.prefix) {
+        let mut best: Option<(&Mount, &str)> = None;
+
+        for mount in mounts.iter() {
+            if let Some(rest) = path.strip_prefix(&mount.prefix) {
                 let rest = rest.strip_prefix('/').unwrap_or(rest);
-                return f(mount, rest);
+
+                match best {
+                    None => best = Some((mount, rest)),
+                    Some((prev, _)) if mount.prefix.len() > prev.prefix.len() => {
+                        best = Some((mount, rest))
+                    }
+                    _ => {}
+                }
             }
         }
 
-        Err(FsError::NotFound)
+        let (mount, rest) = best.ok_or(FsError::NotFound)?;
+        f(mount, rest)
     }
 }
 
@@ -63,7 +106,7 @@ impl FileSystem for VirtFS {
         self.dispatch(path, |mount, rest| mount.fs.delete(rest))
     }
 
-    fn ls(&self, path: &str) -> Result<vec::Vec<alloc::string::String>, FsError> {
+    fn ls(&self, path: &str) -> Result<Vec<String>, FsError> {
         self.dispatch(path, |mount, rest| mount.fs.ls(rest))
     }
 
@@ -71,15 +114,16 @@ impl FileSystem for VirtFS {
         self.dispatch(path, |mount, rest| mount.fs.mkdir(rest))
     }
 
-    fn mount(&self) -> Result<(), FsError> {
-        Ok(())
-    }
-
     fn rmdir(&self, path: &str) -> Result<(), FsError> {
         self.dispatch(path, |mount, rest| mount.fs.rmdir(rest))
     }
 
-    fn stat(&self, path: &str) -> Result<super::file::FileStat, FsError> {
+    fn stat(&self, path: &str) -> Result<FileStat, FsError> {
         self.dispatch(path, |mount, rest| mount.fs.stat(rest))
     }
+}
+
+/// Public VFS entry point
+pub fn vfs() -> &'static VirtFS {
+    &VFS
 }

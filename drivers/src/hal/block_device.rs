@@ -152,8 +152,7 @@ pub trait BlockDevice: Send + Sync {
     /// - `InvalidBuffer`: Buffer size incorrect
     /// - `WriteProtected`: Device is read-only
     /// - `WriteError`: Hardware failure
-    fn write_blocks(&mut self, start_block: u64, buffers: &[&[u8]])
-    -> Result<(), BlockDeviceError>;
+    fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), BlockDeviceError>;
 
     /// Read a single block
     ///
@@ -173,7 +172,7 @@ pub trait BlockDevice: Send + Sync {
     /// # Arguments
     /// - `block`: Block address (LBA)
     /// - `buffer`: Buffer to write from (must be block_size bytes)
-    fn write_block(&mut self, block: u64, buffer: &[u8]) -> Result<(), BlockDeviceError> {
+    fn write_block(&self, block: u64, buffer: &[u8]) -> Result<(), BlockDeviceError> {
         self.write_blocks(block, &[buffer])
     }
 
@@ -377,6 +376,14 @@ pub struct Csd {
     pub write_block_len: u16,
     /// Card command classes supported (bitmap)
     pub card_command_classes: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CardType {
+    Unknown,
+    SDv1,
+    SDv2,
+    MMC,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

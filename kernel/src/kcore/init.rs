@@ -38,5 +38,9 @@ pub extern "C" fn kernel_init() {
         heap_allocator::init_heap(heap_start, heap_end);
 
         Platform::console_write("Early init done\n");
+
+        Platform::init_block_devices().expect("Failed to initialize block devices");
+
+        Platform::console_write("Block devices initialized\n");
     }
 }

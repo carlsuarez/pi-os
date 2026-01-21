@@ -15,9 +15,13 @@ mod mm;
 mod process;
 mod syscall;
 
-use crate::irq::handlers;
-use crate::mm::page_allocator::PAGE_ALLOCATOR;
+use crate::fs::FileSystem;
+use crate::fs::fat::fat32::*;
+use crate::{fs::vfs::vfs, irq::handlers};
+use alloc::sync::Arc;
 use core::panic::PanicInfo;
+use drivers::hal::block_device::BlockDevice;
+use drivers::platform::bcm2835::EMMC;
 use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
 
 // ============================================================================
@@ -30,8 +34,19 @@ pub extern "C" fn kernel_main() -> ! {
     kprintln!("Booting {} kernel", Platform::name());
     kprintln!("========================================");
 
-    // Test Memory Allocators
-    test_memory_allocators();
+    // Get the BlockDevice
+    let dev: Arc<dyn BlockDevice> = {
+        let guard = EMMC.lock();
+        // We clone the Arc inside the Option.
+        // This gives us a new Arc pointer to the SAME driver.
+        let dev_arc = guard.as_ref().expect("EMMC not initialized").clone();
+        dev_arc
+    };
+
+    // Mount root filesystem (FAT32)
+    vfs().init(Fat32Fs::mount(dev).expect("Failed to mount FAT32"));
+
+    kprintln!("VFS initialized");
 
     // Setup Interrupt Handlers
     let timer_irq = Platform::timer_irq();
@@ -45,7 +60,25 @@ pub extern "C" fn kernel_main() -> ! {
     crate::arch::arm::interrupt::enable();
     kprintln!("Enabled CPU interrupts");
 
-    //: Start System Timer
+    if let Ok(dir) = vfs().ls("/") {
+        kprintln!("Root directory contents:");
+        for entry in dir {
+            kprintln!(" - {}", entry);
+        }
+    } else {
+        kprintln!("Failed to read root directory");
+    }
+
+    let test = vfs().open("/test.txt").unwrap();
+
+    let mut buffer = [0u8; 64];
+    test.seek(crate::fs::file::SeekWhence::Start, 0).unwrap();
+    let bytes_read = test.read(&mut buffer, 0).unwrap();
+    let content = core::str::from_utf8(&buffer[..bytes_read]).unwrap();
+    kprintln!("Read {} bytes from /test.txt:", bytes_read);
+    kprintln!("{}", content);
+
+    // Start System Timer
     Platform::timer_start(1_000_000); // 1 second interval
     kprintln!("Started system timer (1 second interval)");
 
@@ -74,54 +107,6 @@ fn kernel_main_loop() -> ! {
         // - Handle deferred work
         // - etc.
     }
-}
-
-// ============================================================================
-// Memory Allocator Tests
-// ============================================================================
-
-fn test_memory_allocators() {
-    use alloc::boxed::Box;
-    use alloc::string::String;
-    use alloc::vec::Vec;
-
-    kprintln!("Testing memory allocators...");
-
-    // Test page allocator
-    let page = PAGE_ALLOCATOR.alloc().expect("Failed to allocate page");
-    kprintln!("  Page allocator: allocated page at 0x{:X}", page.addr());
-
-    let page_ptr = page.addr() as *mut u8;
-    unsafe {
-        core::ptr::write_bytes(page_ptr, 0xAB, 16);
-        kprint!("  First 16 bytes: ");
-        for i in 0..16 {
-            kprint!("{:02X} ", *page_ptr.add(i));
-        }
-        kprintln!();
-    }
-
-    // Test heap allocator - Vec
-    let mut v = Vec::new();
-    v.push(1);
-    v.push(2);
-    v.push(3);
-    kprintln!("  Heap allocator (Vec): {:?}", v);
-
-    // Test heap allocator - String
-    let mut s = String::from("Hello ");
-    s.push_str("from heap!");
-    kprintln!("  Heap allocator (String): {}", s);
-
-    // Test heap allocator - Box
-    let boxed = Box::new(42);
-    kprintln!("  Heap allocator (Box): {}", *boxed);
-
-    // Test collections
-    let numbers: Vec<u32> = (0..10).collect();
-    kprintln!("  Heap allocator (Range): {} elements", numbers.len());
-
-    kprintln!("All memory tests passed");
 }
 
 // ============================================================================

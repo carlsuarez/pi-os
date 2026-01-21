@@ -111,6 +111,11 @@ pub trait Platform {
     /// Get timer IRQ number
     fn timer_irq() -> u32;
 
+    /// Initialize block devices
+    /// # Safety
+    /// Must only be called once.
+    unsafe fn init_block_devices() -> Result<(), &'static str>;
+
     /// Access a UART by index
     ///
     /// Executes the closure with mutable access to the specified UART.
@@ -128,7 +133,7 @@ pub trait Platform {
 // Platform selection based on Cargo features
 cfg_if::cfg_if! {
     if #[cfg(feature = "bcm2835")] {
-        mod bcm2835;
+        pub mod bcm2835;
         pub use bcm2835::Bcm2835Platform as CurrentPlatform;
     } else if #[cfg(feature = "bcm2711")] {
         mod bcm2711;

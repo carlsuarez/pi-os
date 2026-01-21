@@ -43,25 +43,25 @@ SECTIONS
     /* Kernel heap */
     . = ALIGN(4096);
     _kernel_heap_start = .;
-    . = . + 0x40000;          /* 256 KB */
+    . = . + 0x80000;          /* 512 KB */
     _kernel_heap_end = .;
 
     /* Kernel (System mode) stack */
     . = ALIGN(4096);
     _kernel_stack_bottom = .;
-    . = . + 0x8000;           /* 32 KB */
+    . = . + 0x10000;           /* 64 KB */
     _kernel_stack_top = .;
 
     /* IRQ stack */
     . = ALIGN(4096);
     _irq_stack_bottom = .;
-    . = . + 0x1000;           /* 4 KB */
+    . = . + 0x2000;           /* 8 KB */
     _irq_stack_top = .;
 
     /* SVC stack */
     . = ALIGN(4096);
     _svc_stack_bottom = .;
-    . = . + 0x1000;           /* 4 KB */
+    . = . + 0x2000;           /* 8 KB */
     _svc_stack_top = .;
 
     _kernel_end = .;

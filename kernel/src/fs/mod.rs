@@ -8,6 +8,7 @@ pub mod fd;
 pub mod file;
 pub mod vfs;
 
+#[derive(Debug)]
 pub enum FsError {
     NotFound,
     AlreadyExists,
@@ -39,7 +40,4 @@ pub trait FileSystem: Send + Sync {
 
     /// Remove a directory
     fn rmdir(&self, path: &str) -> Result<(), FsError>;
-
-    /// Mount the filesystem
-    fn mount(&self) -> Result<(), FsError>;
 }

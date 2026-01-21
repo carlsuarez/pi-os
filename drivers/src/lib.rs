@@ -41,3 +41,5 @@ pub use hal::gpio::{GpioController, PinLevel};
 pub use hal::interrupt::InterruptController;
 pub use hal::serial::{SerialConfig, SerialPort};
 pub use hal::timer::Timer;
+
+extern crate alloc;

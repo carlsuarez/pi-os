@@ -1,6 +1,6 @@
 use crate::mm::page_table::{L1Table, L2Table};
 use common::sync::SpinLock;
-use core::ptr;
+use core::ptr::{self, write_volatile};
 use drivers::platform::{CurrentPlatform, Platform};
 
 /// Error types for MMU operations
@@ -41,25 +41,24 @@ pub const MEM_NORMAL_WRITEBACK: u32 = (0b001 << 12) | (1 << 3) | (1 << 2);
 // Assembly-declared static for kernel L1 page table
 unsafe extern "C" {
     static mut l1_page_table: [u32; 4096];
+    static _vectors: u8;
 }
 
 static KERNEL_L1_LOCK: SpinLock<()> = SpinLock::new(());
 
-/// Compute section descriptor for Normal memory (cacheable write-back)
 #[inline(always)]
 fn section_entry_normal(phys_addr: usize, ap: u32, domain: u32) -> u32 {
     let base = (phys_addr & SECTION_MASK) as u32;
-    let ap_bits = ((ap & 0x4) << 13) | ((ap & 0x3) << 10); // APX in bit 15, AP[1:0] in [11:10]
+    let ap_bits = ((ap & 0x4) << 13) | ((ap & 0x3) << 10); // APX @15, AP[1:0] @11:10
 
     base
-        | MEM_NORMAL_WRITEBACK  // TEX=001, C=1, B=1
-        | ap_bits               // Access permissions
-        | (domain << 5)         // Domain
-        | (0 << 4)              // XN=0 (executable)
-        | 0b10 // Section descriptor
+        | MEM_NORMAL_WRITEBACK
+        | ap_bits
+        | (domain << 5)
+        | (0 << 4)        // XN=0 (executable)
+        | 0b10 // Section
 }
 
-/// Compute section descriptor for Device memory (MMIO)
 #[inline(always)]
 fn section_entry_device(phys_addr: usize, ap: u32, domain: u32) -> u32 {
     let base = (phys_addr & SECTION_MASK) as u32;
@@ -69,7 +68,7 @@ fn section_entry_device(phys_addr: usize, ap: u32, domain: u32) -> u32 {
         | MEM_DEVICE
         | ap_bits
         | (domain << 5)
-        | (1 << 4)              // XN=1 (not executable for device memory)
+        | (1 << 4)        // XN=1
         | 0b10
 }
 
@@ -149,7 +148,7 @@ where
 pub unsafe fn set_kernel_l1_entry(va: usize, entry: u32) {
     unsafe {
         let l1: *mut u32 = &raw mut l1_page_table[l1_index(va)];
-        ptr::write_volatile(l1, entry);
+        write_volatile(l1, entry);
     }
 }
 
@@ -161,31 +160,43 @@ pub unsafe fn set_kernel_l1_entry(va: usize, entry: u32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn init_kernel_page_table() {
     unsafe {
-        let l1: *mut u32 = &raw mut l1_page_table[0];
+        let l1: *mut u32 = &mut l1_page_table[0];
 
-        // Clear entire L1 table
+        // Clear L1
         for i in 0..NUM_L1_ENTRIES {
-            ptr::write_volatile(l1.add(i), 0);
+            write_volatile(l1.add(i), 0);
         }
 
         let mm = CurrentPlatform::memory_map();
 
-        // Map kernel RAM as normal memory
-        let ram_end = mm.ram_start + mm.ram_size;
-        let mut addr = mm.ram_start & SECTION_MASK;
+        // Map RAM as Normal WBWA
+        let ram_start = mm.ram_start & SECTION_MASK;
+        let ram_end = (mm.ram_start + mm.ram_size + SECTION_SIZE - 1) & SECTION_MASK;
+
+        let mut addr = ram_start;
         while addr < ram_end {
-            ptr::write_volatile(
+            write_volatile(
                 l1.add(l1_index(addr)),
                 section_entry_normal(addr, AP_PRIV_RW, DOMAIN_KERNEL),
             );
             addr += SECTION_SIZE;
         }
 
-        // Map peripheral space as device memory
-        let periph_end = mm.peripheral_base + mm.peripheral_size;
-        addr = mm.peripheral_base & SECTION_MASK;
+        // Ensure vectors' section is mapped executable
+        let v = (&_vectors as *const _ as usize) & SECTION_MASK;
+        write_volatile(
+            l1.add(l1_index(v)),
+            section_entry_normal(v, AP_PRIV_RW, DOMAIN_KERNEL),
+        );
+
+        // Map peripherals as Device
+        let periph_start = mm.peripheral_base & SECTION_MASK;
+        let periph_end =
+            (mm.peripheral_base + mm.peripheral_size + SECTION_SIZE - 1) & SECTION_MASK;
+
+        addr = periph_start;
         while addr < periph_end {
-            ptr::write_volatile(
+            write_volatile(
                 l1.add(l1_index(addr)),
                 section_entry_device(addr, AP_PRIV_RW, DOMAIN_HW),
             );
@@ -201,7 +212,7 @@ pub unsafe extern "C" fn init_kernel_page_table() {
 pub fn map_page(l2_table: &mut L2Table, va: usize, phys_addr: usize, ap: u32) {
     unsafe {
         let l2_ptr = l2_table.base() as *mut u32;
-        ptr::write_volatile(l2_ptr.add(l2_index(va)), l2_page_entry(phys_addr, ap));
+        write_volatile(l2_ptr.add(l2_index(va)), l2_page_entry(phys_addr, ap));
     }
 }
 

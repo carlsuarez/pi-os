@@ -14,7 +14,7 @@ pub trait File: Send + Sync {
     }
 
     /// Seek (optional, default not supported)
-    fn seek(&self, _whence: SeekWhence, _offset: isize) -> Result<usize, FdError> {
+    fn seek(&self, whence: SeekWhence, offset: isize) -> Result<usize, FdError> {
         Err(FdError::NotSupported)
     }
 }

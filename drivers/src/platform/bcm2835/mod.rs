@@ -21,6 +21,7 @@
 pub mod gpio;
 pub mod interrupt;
 pub mod timer;
+use alloc::sync::Arc;
 pub use gpio::Bcm2835Gpio;
 pub use interrupt::Bcm2835InterruptController;
 pub use timer::Bcm2835Timer;
@@ -29,14 +30,17 @@ pub mod framebuffer;
 pub mod mailbox;
 
 use super::{MemoryMap, Platform};
-use crate::hal::{
-    gpio::{GpioController, PullMode},
-    interrupt::InterruptController,
-    serial::{NonBlockingSerial, SerialConfig, SerialPort},
-    timer::Timer,
-};
 use crate::peripheral::pl011::PL011;
 use crate::platform::bcm2835::timer::Channel;
+use crate::{
+    hal::{
+        gpio::{GpioController, PullMode},
+        interrupt::InterruptController,
+        serial::{NonBlockingSerial, SerialConfig, SerialPort},
+        timer::Timer,
+    },
+    platform::bcm2835::emmc::Emmc,
+};
 use common::arch::arm::bcm2835::irq::*;
 use common::sync::SpinLock;
 
@@ -58,6 +62,10 @@ static TIMER: SpinLock<Option<Bcm2835Timer>> = SpinLock::new(None);
 
 /// Console UART instance
 static CONSOLE: SpinLock<Option<PL011>> = SpinLock::new(None);
+
+/// EMMC Block Device instance
+// TODO change to private once device manager is implemented
+pub static EMMC: SpinLock<Option<Arc<Emmc>>> = SpinLock::new(None);
 
 // ============================================================================
 // Platform Implementation
@@ -171,6 +179,14 @@ impl Platform for Bcm2835Platform {
 
     fn timer_irq() -> u32 {
         IRQ_SYSTEM_TIMER_1
+    }
+
+    unsafe fn init_block_devices() -> Result<(), &'static str> {
+        let mut emmc = unsafe { Emmc::new() };
+        emmc.init()
+            .map_err(|_| "Failed to initialize EMMC device")?;
+        *EMMC.lock() = Some(Arc::new(emmc));
+        Ok(())
     }
 
     fn with_uart<R>(index: usize, f: impl FnOnce(&mut dyn SerialPort) -> R) -> Option<R> {

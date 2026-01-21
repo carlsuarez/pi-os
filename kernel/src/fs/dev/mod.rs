@@ -69,7 +69,4 @@ impl FileSystem for DevFs {
     fn rmdir(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::PermissionDenied)
     }
-    fn mount(&self) -> Result<(), FsError> {
-        Ok(())
-    }
 }
