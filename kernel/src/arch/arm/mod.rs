@@ -1,80 +1,66 @@
-//! ARM Architecture Support
-//!
-//! Architecture-specific utilities and helpers.
+//! ARMv6/ARMv7 Style Memory Barriers
 
-pub mod context;
-pub mod exception;
-pub mod interrupt;
-pub mod mmu;
-
-/// Wait for interrupt (low-power idle)
+/// Data Synchronization Barrier (DSB)
 ///
-/// Puts the CPU into a low-power state until an interrupt occurs.
-/// This is more power-efficient than busy-waiting in a loop.
-///
-/// # Example
-///
-/// ```rust
-/// loop {
-///     wfi(); // Sleep until interrupt
-///     // Process work triggered by interrupt
-/// }
-/// ```
-#[inline(always)]
-pub fn wfi() {
-    unsafe {
-        core::arch::asm!("wfi", options(nomem, nostack, preserves_flags));
-    }
-}
-
-/// Wait for event (low-power idle with events)
-///
-/// Similar to WFI but also wakes on SEV (Send Event) instruction.
-#[inline(always)]
-pub fn wfe() {
-    unsafe {
-        core::arch::asm!("wfe", options(nomem, nostack, preserves_flags));
-    }
-}
-
-/// Send event to all CPUs
-///
-/// Wakes CPUs waiting in WFE.
-#[inline(always)]
-pub fn sev() {
-    unsafe {
-        core::arch::asm!("sev", options(nomem, nostack, preserves_flags));
-    }
-}
-
-/// Data synchronization barrier
-///
-/// Ensures all memory accesses before this point complete
-/// before any after it begin.
+/// Ensures that all explicit memory accesses before this instruction complete
+/// before any following instructions execute.
 #[inline(always)]
 pub fn dsb() {
     unsafe {
-        core::arch::asm!("dsb", options(nostack, preserves_flags));
+        core::arch::asm!(
+            "mov r0, #0",
+            "mcr p15, 0, r0, c7, c10, 4", // DSB
+            out("r0") _,
+            options(nostack, preserves_flags)
+        );
     }
 }
 
-/// Data memory barrier
+/// Data Memory Barrier (DMB)
 ///
-/// Ensures memory accesses occur in program order.
+/// Ensures memory accesses complete in program order.
 #[inline(always)]
 pub fn dmb() {
     unsafe {
-        core::arch::asm!("dmb", options(nostack, preserves_flags));
+        core::arch::asm!(
+            "mov r0, #0",
+            "mcr p15, 0, r0, c7, c10, 5", // DMB
+            out("r0") _,
+            options(nostack, preserves_flags)
+        );
     }
 }
 
-/// Instruction synchronization barrier
+/// Instruction Synchronization Barrier (ISB)
 ///
-/// Flushes the pipeline and ensures all instructions
-/// after this point see the effects of instructions before.
+/// Flushes the pipeline and ensures all instructions after this point
+/// see the effects of previous instructions.
 #[inline(always)]
 pub fn isb() {
     unsafe {
-        core::arch::asm!("isb", options(nostack, preserves_flags));
+        core::arch::asm!(
+            "mov r0, #0",
+            "mcr p15, 0, r0, c7, c5, 4", // ISB
+            out("r0") _,
+            options(nostack, preserves_flags)
+        );
     }
+}
+
+/// Wait for Interrupt
+#[inline(always)]
+pub fn wfi() {
+    unsafe { core::arch::asm!("wfi", options(nomem, nostack, preserves_flags)) }
+}
+
+/// Wait for Event
+#[inline(always)]
+pub fn wfe() {
+    unsafe { core::arch::asm!("wfe", options(nomem, nostack, preserves_flags)) }
+}
+
+/// Send Event
+#[inline(always)]
+pub fn sev() {
+    unsafe { core::arch::asm!("sev", options(nomem, nostack, preserves_flags)) }
 }
