@@ -89,7 +89,7 @@ pub enum SerialError {
 /// Serial port trait.
 ///
 /// This trait provides the core interface for serial communication.
-pub trait SerialPort {
+pub trait SerialPort: Send + Sync {
     /// Configure the serial port.
     ///
     /// This must be called before using the serial port.

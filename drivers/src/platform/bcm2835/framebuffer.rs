@@ -1,113 +1,24 @@
-//! BCM2835 Framebuffer Driver
-//!
-//! This driver provides access to the display framebuffer through
-//! the mailbox interface. It can be used to:
-//! - Initialize a framebuffer
-//! - Configure display resolution and depth
-//! - Get framebuffer memory address
-//! - Draw to the screen
-//!
-//! # Example
-//!
-//! ```no_run
-//! use drivers::platform::bcm2835::framebuffer::{Framebuffer, FramebufferConfig};
-//!
-//! unsafe {
-//!     let config = FramebufferConfig {
-//!         width: 1920,
-//!         height: 1080,
-//!         virtual_width: 1920,
-//!         virtual_height: 1080,
-//!         depth: 32,
-//!     };
-//!     
-//!     let mut fb = Framebuffer::new(config).unwrap();
-//!     
-//!     // Clear screen to red
-//!     fb.clear(0xFFFF0000);
-//!     
-//!     // Draw a pixel
-//!     fb.set_pixel(100, 100, 0xFFFFFFFF);
-//! }
-//! ```
-
 use super::mailbox::{Channel, Mailbox, tags};
+use crate::hal::framebuffer::{
+    FrameBuffer, FrameBufferConfig, FrameBufferError, FrameBufferInfo, PixelFormat,
+};
 use core::ptr::{read_volatile, write_volatile};
 use core::slice;
 
-/// Framebuffer configuration.
-#[derive(Debug, Copy, Clone)]
-pub struct FramebufferConfig {
-    /// Physical width in pixels.
-    pub width: u32,
-    /// Physical height in pixels.
-    pub height: u32,
-    /// Virtual width in pixels (for scrolling).
-    pub virtual_width: u32,
-    /// Virtual height in pixels (for double buffering).
-    pub virtual_height: u32,
-    /// Bits per pixel (16, 24, or 32).
-    pub depth: u32,
-}
-
-impl Default for FramebufferConfig {
-    fn default() -> Self {
-        Self {
-            width: 1920,
-            height: 1080,
-            virtual_width: 1920,
-            virtual_height: 1080,
-            depth: 32,
-        }
-    }
-}
-
-/// Pixel format.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum PixelOrder {
-    /// BGR (Blue, Green, Red).
-    Bgr = 0,
-    /// RGB (Red, Green, Blue).
-    Rgb = 1,
-}
-
-/// Framebuffer information returned by GPU.
-#[derive(Debug, Copy, Clone)]
-pub struct FramebufferInfo {
-    /// Physical width in pixels.
-    pub width: u32,
-    /// Physical height in pixels.
-    pub height: u32,
-    /// Virtual width in pixels.
-    pub virtual_width: u32,
-    /// Virtual height in pixels.
-    pub virtual_height: u32,
-    /// Bytes per row.
-    pub pitch: u32,
-    /// Bits per pixel.
-    pub depth: u32,
-    /// Pixel order (RGB or BGR).
-    pub pixel_order: PixelOrder,
-    /// Framebuffer physical address.
-    pub address: usize,
-    /// Framebuffer size in bytes.
-    pub size: usize,
-}
-
-/// BCM2835 framebuffer.
-pub struct Framebuffer {
-    info: FramebufferInfo,
+/// BCM2835 framebuffer implementation
+pub struct Bcm2835Framebuffer {
+    info: FrameBufferInfo,
     buffer: &'static mut [u32],
+    pixel_format: PixelFormat,
 }
 
-impl Framebuffer {
-    /// Initialize a new framebuffer.
+impl Bcm2835Framebuffer {
+    /// Initialize a new framebuffer with the given configuration
     ///
     /// # Safety
-    ///
     /// - Mailbox must be accessible
-    /// - Identity mapping required
-    pub unsafe fn new(config: FramebufferConfig) -> Result<Self, FramebufferError> {
+    /// - Identity mapping required for framebuffer memory
+    pub unsafe fn new(config: FrameBufferConfig) -> Result<Self, FrameBufferError> {
         // Request buffer must be 16-byte aligned
         #[repr(C, align(16))]
         struct FbRequest {
@@ -210,7 +121,7 @@ impl Framebuffer {
         let req_phys = &raw const req as usize;
 
         if !unsafe { mailbox.call(Channel::Property, req_phys) } {
-            return Err(FramebufferError::MailboxFailed);
+            return Err(FrameBufferError::MailboxFailed);
         }
 
         // Read response
@@ -220,26 +131,24 @@ impl Framebuffer {
         let pixel_order = unsafe { read_volatile(&req.pixel_order) };
 
         if fb_addr == 0 || fb_size == 0 {
-            return Err(FramebufferError::AllocationFailed);
+            return Err(FrameBufferError::AllocationFailed);
         }
 
-        // Convert framebuffer address (GPU uses bus addresses)
-        // The GPU address needs to be converted to ARM physical address
-        // by clearing the top bits
+        // Convert GPU address to ARM physical address
         let fb_addr = (fb_addr & 0x3FFF_FFFF) as usize;
 
-        let info = FramebufferInfo {
-            width: config.width,
-            height: config.height,
-            virtual_width: config.virtual_width,
-            virtual_height: config.virtual_height,
-            pitch,
-            depth: config.depth,
-            pixel_order: if pixel_order == 0 {
-                PixelOrder::Bgr
-            } else {
-                PixelOrder::Rgb
-            },
+        let pixel_format = if pixel_order == 0 {
+            PixelFormat::Bgr
+        } else {
+            PixelFormat::Rgb
+        };
+
+        let info = FrameBufferInfo {
+            width: config.width as usize,
+            height: config.height as usize,
+            pitch: pitch as usize,
+            depth: config.depth as usize,
+            pixel_format,
             address: fb_addr,
             size: fb_size as usize,
         };
@@ -248,53 +157,75 @@ impl Framebuffer {
         let buffer =
             unsafe { slice::from_raw_parts_mut(fb_addr as *mut u32, fb_size as usize / 4) };
 
-        Ok(Self { info, buffer })
+        Ok(Self {
+            info,
+            buffer,
+            pixel_format,
+        })
     }
 
-    /// Get framebuffer information.
-    pub fn info(&self) -> &FramebufferInfo {
+    /// Get framebuffer information
+    pub fn info(&self) -> &FrameBufferInfo {
         &self.info
     }
 
-    /// Get the raw framebuffer slice.
+    /// Get raw framebuffer slice (read-only)
     pub fn buffer(&self) -> &[u32] {
         self.buffer
     }
 
-    /// Get the raw mutable framebuffer slice.
+    /// Get raw mutable framebuffer slice
     pub fn buffer_mut(&mut self) -> &mut [u32] {
         self.buffer
     }
 
-    /// Clear the framebuffer to a solid color.
-    ///
-    /// # Arguments
-    ///
-    /// - `color`: 32-bit ARGB color value
-    pub fn clear(&mut self, color: u32) {
-        for pixel in self.buffer.iter_mut() {
-            *pixel = color;
+    /// Calculate pixel offset from coordinates
+    #[inline]
+    fn pixel_offset(&self, x: u32, y: u32) -> Option<usize> {
+        if x >= self.info.width as u32 || y >= self.info.height as u32 {
+            return None;
+        }
+
+        let offset = (y * (self.info.pitch as u32 / 4) + x) as usize;
+        if offset < self.buffer.len() {
+            Some(offset)
+        } else {
+            None
         }
     }
+}
 
-    /// Set a pixel at the given coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// - `x`: X coordinate
-    /// - `y`: Y coordinate
-    /// - `color`: 32-bit ARGB color value
-    ///
-    /// # Returns
-    ///
-    /// `true` if the pixel was set, `false` if out of bounds.
-    pub fn set_pixel(&mut self, x: u32, y: u32, color: u32) -> bool {
-        if x >= self.info.width || y >= self.info.height {
-            return false;
-        }
+impl FrameBuffer for Bcm2835Framebuffer {
+    fn width(&self) -> usize {
+        self.info.width
+    }
 
-        let offset = (y * (self.info.pitch / 4) + x) as usize;
-        if offset < self.buffer.len() {
+    fn height(&self) -> usize {
+        self.info.height
+    }
+
+    fn bytes_per_pixel(&self) -> usize {
+        self.info.depth / 8
+    }
+
+    fn pitch(&self) -> usize {
+        self.info.pitch
+    }
+
+    fn buffer_ptr(&self) -> *mut u8 {
+        self.info.address as *mut u8
+    }
+
+    fn pixel_format(&self) -> PixelFormat {
+        self.pixel_format
+    }
+
+    fn clear(&mut self, color: u32) {
+        self.buffer.fill(color);
+    }
+
+    fn set_pixel(&mut self, x: u32, y: u32, color: u32) -> bool {
+        if let Some(offset) = self.pixel_offset(x, y) {
             self.buffer[offset] = color;
             true
         } else {
@@ -302,100 +233,45 @@ impl Framebuffer {
         }
     }
 
-    /// Get the color of a pixel at the given coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// - `x`: X coordinate
-    /// - `y`: Y coordinate
-    ///
-    /// # Returns
-    ///
-    /// The pixel color, or `None` if out of bounds.
-    pub fn get_pixel(&self, x: u32, y: u32) -> Option<u32> {
-        if x >= self.info.width || y >= self.info.height {
-            return None;
-        }
-
-        let offset = (y * (self.info.pitch / 4) + x) as usize;
-        self.buffer.get(offset).copied()
+    fn get_pixel(&self, x: u32, y: u32) -> Option<u32> {
+        self.pixel_offset(x, y).map(|offset| self.buffer[offset])
     }
 
-    /// Draw a horizontal line.
-    pub fn draw_hline(&mut self, x1: u32, x2: u32, y: u32, color: u32) {
-        let x1 = x1.min(self.info.width - 1);
-        let x2 = x2.min(self.info.width - 1);
-
-        if y >= self.info.height {
+    fn draw_hline(&mut self, x1: u32, x2: u32, y: u32, color: u32) {
+        if y >= self.info.height as u32 {
             return;
         }
 
-        for x in x1..=x2 {
-            self.set_pixel(x, y, color);
+        let x1 = x1.min(self.info.width as u32 - 1);
+        let x2 = x2.min(self.info.width as u32 - 1);
+        let (x1, x2) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
+
+        if let Some(start_offset) = self.pixel_offset(x1, y) {
+            let len = (x2 - x1 + 1) as usize;
+            self.buffer[start_offset..start_offset + len].fill(color);
         }
     }
 
-    /// Draw a vertical line.
-    pub fn draw_vline(&mut self, x: u32, y1: u32, y2: u32, color: u32) {
-        let y1 = y1.min(self.info.height - 1);
-        let y2 = y2.min(self.info.height - 1);
-
-        if x >= self.info.width {
+    fn draw_vline(&mut self, x: u32, y1: u32, y2: u32, color: u32) {
+        if x >= self.info.width as u32 {
             return;
         }
+
+        let y1 = y1.min(self.info.height as u32 - 1);
+        let y2 = y2.min(self.info.height as u32 - 1);
+        let (y1, y2) = if y1 <= y2 { (y1, y2) } else { (y2, y1) };
 
         for y in y1..=y2 {
             self.set_pixel(x, y, color);
         }
     }
 
-    /// Draw a filled rectangle.
-    pub fn draw_rect(&mut self, x: u32, y: u32, width: u32, height: u32, color: u32) {
-        let x2 = (x + width).min(self.info.width);
-        let y2 = (y + height).min(self.info.height);
+    fn draw_rect(&mut self, x: u32, y: u32, width: u32, height: u32, color: u32) {
+        let x2 = x.saturating_add(width).min(self.info.width as u32);
+        let y2 = y.saturating_add(height).min(self.info.height as u32);
 
         for py in y..y2 {
-            for px in x..x2 {
-                self.set_pixel(px, py, color);
-            }
+            self.draw_hline(x, x2 - 1, py, color);
         }
     }
-}
-
-/// Framebuffer errors.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum FramebufferError {
-    /// Mailbox call failed.
-    MailboxFailed,
-    /// GPU failed to allocate framebuffer.
-    AllocationFailed,
-    /// Invalid configuration.
-    InvalidConfig,
-}
-
-// ============================================================================
-// Color Utilities
-// ============================================================================
-
-/// Color utility functions.
-pub mod color {
-    /// Create an ARGB color from components.
-    pub const fn argb(a: u8, r: u8, g: u8, b: u8) -> u32 {
-        ((a as u32) << 24) | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-    }
-
-    /// Create an RGB color (alpha = 255).
-    pub const fn rgb(r: u8, g: u8, b: u8) -> u32 {
-        argb(255, r, g, b)
-    }
-
-    /// Common colors.
-    pub const BLACK: u32 = rgb(0, 0, 0);
-    pub const WHITE: u32 = rgb(255, 255, 255);
-    pub const RED: u32 = rgb(255, 0, 0);
-    pub const GREEN: u32 = rgb(0, 255, 0);
-    pub const BLUE: u32 = rgb(0, 0, 255);
-    pub const YELLOW: u32 = rgb(255, 255, 0);
-    pub const CYAN: u32 = rgb(0, 255, 255);
-    pub const MAGENTA: u32 = rgb(255, 0, 255);
 }

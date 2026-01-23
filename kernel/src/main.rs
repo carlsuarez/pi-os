@@ -1,6 +1,5 @@
 //! Kernel Main Entry Point
 //!
-
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
@@ -17,11 +16,15 @@ mod syscall;
 
 use crate::fs::FileSystem;
 use crate::fs::fat::fat32::*;
+use crate::fs::fd::{AccessMode, Fd, FdFlags, FileDescriptorTable};
 use crate::{fs::vfs::vfs, irq::handlers};
 use alloc::sync::Arc;
 use core::panic::PanicInfo;
+use drivers::console::console_write;
+use drivers::device_manager::devices;
 use drivers::hal::block_device::BlockDevice;
-use drivers::platform::bcm2835::EMMC;
+use drivers::kprint;
+use drivers::kprintln;
 use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
 
 // ============================================================================
@@ -34,62 +37,77 @@ pub extern "C" fn kernel_main() -> ! {
     kprintln!("Booting {} kernel", Platform::name());
     kprintln!("========================================");
 
-    // Get the BlockDevice
+    // ------------------------------------------------------------------------
+    // Fetch block device from DeviceManager
+    // ------------------------------------------------------------------------
     let dev: Arc<dyn BlockDevice> = {
-        let guard = EMMC.lock();
-        // We clone the Arc inside the Option.
-        // This gives us a new Arc pointer to the SAME driver.
-        let dev_arc = guard.as_ref().expect("EMMC not initialized").clone();
-        dev_arc
+        let mgr = devices().lock();
+        mgr.block("emmc0").expect("EMMC not registered")
     };
 
-    // Mount root filesystem (FAT32)
+    // ------------------------------------------------------------------------
+    // Mount filesystem
+    // ------------------------------------------------------------------------
     vfs().init(Fat32Fs::mount(dev).expect("Failed to mount FAT32"));
-
     kprintln!("VFS initialized");
 
-    // Setup Interrupt Handlers
+    // ------------------------------------------------------------------------
+    // Interrupts
+    // ------------------------------------------------------------------------
     let timer_irq = Platform::timer_irq();
     handlers::register(timer_irq, handlers::timer);
-    kprintln!("Registered timer interrupt handler (IRQ {})", timer_irq);
-
-    // Enable Interrupts
     Platform::enable_irq(timer_irq);
-    kprintln!("Enabled timer interrupt");
-
     crate::arch::arm::interrupt::enable();
-    kprintln!("Enabled CPU interrupts");
 
-    if let Ok(dir) = vfs().ls("/") {
-        kprintln!("Root directory contents:");
-        for entry in dir {
-            kprintln!(" - {}", entry);
-        }
-    } else {
-        kprintln!("Failed to read root directory");
+    kprintln!("Timer IRQ {} enabled", timer_irq);
+
+    // ------------------------------------------------------------------------
+    // Directory test
+    // ------------------------------------------------------------------------
+    let dir = vfs().ls("/").expect("Failed to read root directory");
+    kprintln!("Root directory:");
+    for entry in dir {
+        kprintln!(" - {}", entry);
     }
 
-    let test = vfs().open("/test.txt").unwrap();
+    // ------------------------------------------------------------------------
+    // FD table test
+    // ------------------------------------------------------------------------
+    kprintln!("\n--- Testing FileDescriptorTable ---");
 
-    let mut buffer = [0u8; 64];
-    test.seek(crate::fs::file::SeekWhence::Start, 0).unwrap();
-    let bytes_read = test.read(&mut buffer, 0).unwrap();
-    let content = core::str::from_utf8(&buffer[..bytes_read]).unwrap();
-    kprintln!("Read {} bytes from /test.txt:", bytes_read);
-    kprintln!("{}", content);
+    let mut fd_table = FileDescriptorTable::new();
+    let file = vfs().open("/test.txt").expect("Failed to open /test.txt");
 
-    // Start System Timer
-    Platform::timer_start(1_000_000); // 1 second interval
-    kprintln!("Started system timer (1 second interval)");
+    let access = AccessMode {
+        read: true,
+        write: false,
+        append: false,
+    };
+    let fd = fd_table.alloc(file, FdFlags::NONE, access).unwrap();
 
-    // Kernel is now fully initialized
+    let mut buf = [0u8; 64];
+    let n = fd_table.get_mut(fd).unwrap().read(&mut buf).unwrap();
+
+    if let Ok(s) = core::str::from_utf8(&buf[..n]) {
+        kprintln!("Read from /test.txt: {}", s);
+    }
+
+    fd_table.close(fd).unwrap();
+
+    // ------------------------------------------------------------------------
+    // Start timer
+    // ------------------------------------------------------------------------
+    Platform::timer_start(1_000_000);
+    kprintln!("System timer started");
+
+    // ------------------------------------------------------------------------
+    // Ready
+    // ------------------------------------------------------------------------
     kprintln!("========================================");
-    kprintln!("Kernel initialization complete!");
-    kprintln!("Platform: {}", Platform::name());
-    kprintln!("Entering main loop...");
+    kprintln!("Kernel initialization complete");
+    kprintln!("Entering main loop");
     kprintln!("========================================");
 
-    // Main kernel loop
     kernel_main_loop();
 }
 
@@ -101,11 +119,7 @@ fn kernel_main_loop() -> ! {
     loop {
         // Wait for interrupt
         crate::arch::arm::wfi();
-
         // Process pending work here
-        // - Schedule processes
-        // - Handle deferred work
-        // - etc.
     }
 }
 
@@ -126,29 +140,4 @@ fn panic(info: &PanicInfo) -> ! {
     loop {
         crate::arch::arm::wfi();
     }
-}
-
-// ============================================================================
-// Print Macros
-// ============================================================================
-
-/// Print to console without newline
-#[macro_export]
-macro_rules! kprint {
-    ($($arg:tt)*) => {{
-        use alloc::format;
-        use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
-        let s = format!($($arg)*);
-        Platform::console_write(&s);
-    }};
-}
-
-/// Print to console with newline
-#[macro_export]
-macro_rules! kprintln {
-    () => { $crate::kprint!("\n") };
-    ($($arg:tt)*) => {{
-        $crate::kprint!($($arg)*);
-        $crate::kprint!("\n");
-    }};
 }

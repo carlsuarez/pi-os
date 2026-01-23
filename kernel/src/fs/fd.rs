@@ -1,5 +1,6 @@
 use super::dev::UartFile;
 use super::file::{File, SeekWhence};
+use crate::fs::FsError;
 use alloc::string::String;
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt;
@@ -37,12 +38,24 @@ impl FileDescriptor {
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, FdError> {
+        if self.access.read == false {
+            return Err(FdError::PermissionDenied);
+        }
+
         let n = self.file.read(buf, self.offset)?;
         self.offset += n;
         Ok(n)
     }
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, FdError> {
+        if self.access.write == false {
+            return Err(FdError::PermissionDenied);
+        }
+
+        if self.access.append {
+            self.offset = self.file.stat()?.size;
+        }
+
         let n = self.file.write(buf, self.offset)?;
         self.offset += n;
         Ok(n)
@@ -53,7 +66,7 @@ impl FileDescriptor {
         let new_offset = match whence {
             Start => offset.max(0) as usize,
             Current => (self.offset as isize + offset).max(0) as usize,
-            End => (self.file.size()? as isize + offset).max(0) as usize,
+            End => (self.file.stat()?.size as isize + offset).max(0) as usize,
         };
         self.offset = new_offset;
         Ok(self.offset)
@@ -144,32 +157,48 @@ impl Default for AccessMode {
 /// Per-process file descriptor table
 pub struct FileDescriptorTable {
     fds: Vec<Option<FileDescriptor>>,
-    next_fd: usize,
 }
 
 impl FileDescriptorTable {
     /// Create a new table with stdio mapped to platform UARTs
     pub fn new() -> Self {
-        let mut table = Self {
-            fds: Vec::new(),
-            next_fd: 3,
-        };
+        let mut table = Self { fds: Vec::new() };
 
         // Wrap platform UART 0 for STDIN, STDOUT, STDERR
         let stdio_file = Arc::new(UartFile::new(0)); // index 0
 
-        for _ in 0..3 {
-            let fd = FileDescriptor::new(
-                stdio_file.clone(),
-                FdFlags::NONE,
-                AccessMode {
-                    read: true,
-                    write: true,
-                    append: false,
-                },
-            );
-            table.fds.push(Some(fd));
-        }
+        let stdin = FileDescriptor::new(
+            stdio_file.clone(),
+            FdFlags::NONE,
+            AccessMode {
+                read: true,
+                write: false,
+                append: false,
+            },
+        );
+        table.fds.push(Some(stdin));
+
+        let stdout = FileDescriptor::new(
+            stdio_file.clone(),
+            FdFlags::NONE,
+            AccessMode {
+                read: false,
+                write: true,
+                append: false,
+            },
+        );
+        table.fds.push(Some(stdout));
+
+        let stderr = FileDescriptor::new(
+            stdio_file.clone(),
+            FdFlags::NONE,
+            AccessMode {
+                read: false,
+                write: true,
+                append: false,
+            },
+        );
+        table.fds.push(Some(stderr));
 
         table
     }
@@ -272,7 +301,20 @@ pub enum FdError {
     IoError,
     InvalidSeek,
     NotSupported,
+    PermissionDenied,
     Other(String),
+}
+
+impl From<FdError> for FsError {
+    fn from(err: FdError) -> Self {
+        match err {
+            FdError::BadFd => FsError::NotFound,
+            FdError::IoError => FsError::IoError,
+            FdError::NotSupported => FsError::NotSupported,
+            FdError::PermissionDenied => FsError::PermissionDenied,
+            other => FsError::Unknown,
+        }
+    }
 }
 
 impl fmt::Display for FdError {
@@ -283,6 +325,7 @@ impl fmt::Display for FdError {
             FdError::IoError => write!(f, "I/O error"),
             FdError::InvalidSeek => write!(f, "invalid seek"),
             FdError::NotSupported => write!(f, "operation not supported"),
+            FdError::PermissionDenied => write!(f, "permission denied"),
             FdError::Other(code) => write!(f, "unknown error: {}", code),
         }
     }

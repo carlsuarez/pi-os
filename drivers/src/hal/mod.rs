@@ -21,6 +21,7 @@
 //! - [`block_device`]: Block storage device access
 
 pub mod block_device;
+pub mod framebuffer;
 pub mod gpio;
 pub mod interrupt;
 pub mod serial;

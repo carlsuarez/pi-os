@@ -15,6 +15,7 @@ pub enum FsError {
     NotADirectory,
     IsADirectory,
     PermissionDenied,
+    NotSupported,
     IoError,
     Unknown,
 }

@@ -16,7 +16,7 @@
 //! Platform::timer_start(1_000_000);
 //! ```
 
-use crate::hal::serial::SerialPort;
+use crate::device_manager::DeviceManager;
 
 /// Platform memory map information
 #[derive(Debug, Clone, Copy)]
@@ -33,101 +33,43 @@ pub struct MemoryMap {
     pub kernel_start: usize,
 }
 
-/// Platform trait - implemented by each supported platform
+/// Platform trait defining required platform-specific functionality.
 pub trait Platform {
     /// Platform name for debugging
     fn name() -> &'static str;
 
-    /// Early platform initialization
-    ///
-    /// Called before any other initialization, including heap.
-    /// Should configure GPIO, clocks, etc.
+    /// Early platform initialization (GPIO, clocks, etc.)
     ///
     /// # Safety
     /// Must only be called once, very early in boot.
     unsafe fn early_init();
 
     /// Get static memory map for this platform
-    ///
-    /// Returns default values. Use `query_ram_size()` for actual RAM.
     fn memory_map() -> MemoryMap;
 
     /// Query actual RAM size from firmware/hardware
-    ///
-    /// Returns `(base, size)` in bytes.
     ///
     /// # Safety
     /// Must only be called after `early_init()`.
     unsafe fn query_ram_size() -> Option<(usize, usize)>;
 
-    /// Initialize console for early debugging
+    /// Initialize and register all platform devices
+    ///
+    /// This replaces init_console, init_interrupts, init_timer, init_block_devices
     ///
     /// # Safety
-    /// Must only be called after `early_init()`.
-    unsafe fn init_console(baud_rate: u32) -> Result<(), &'static str>;
+    /// Must only be called once after `early_init()`.
+    unsafe fn init_devices(device_mgr: &mut DeviceManager) -> Result<(), &'static str>;
 
-    /// Write string to console (blocking)
-    fn console_write(s: &str);
-
-    /// Read a character from console (blocking)
-    fn console_read() -> u8;
-
-    /// Read a character from console (non-blocking)
-    fn console_read_nonblocking() -> Option<u8>;
-
-    /// Initialize interrupt controller
-    ///
-    /// # Safety
-    /// Must only be called once.
-    unsafe fn init_interrupts();
-
-    /// Enable (unmask) an IRQ line
+    /// Platform-specific interrupt handling
+    fn next_pending_irq() -> Option<u32>;
     fn enable_irq(irq: u32);
-
-    /// Disable (mask) an IRQ line
     fn disable_irq(irq: u32);
 
-    /// Get next pending interrupt
-    ///
-    /// Returns the IRQ number of the highest-priority pending interrupt,
-    /// or None if no interrupts are pending.
-    fn next_pending_irq() -> Option<u32>;
-
-    /// Initialize system timer
-    ///
-    /// # Safety
-    /// Must only be called once.
-    unsafe fn init_timer();
-
-    /// Start timer with given interval
-    ///
-    /// # Arguments
-    /// - `interval_us`: Interval in microseconds
+    /// Platform-specific timer control
     fn timer_start(interval_us: u32);
-
-    /// Clear timer interrupt
     fn timer_clear();
-
-    /// Get timer IRQ number
     fn timer_irq() -> u32;
-
-    /// Initialize block devices
-    /// # Safety
-    /// Must only be called once.
-    unsafe fn init_block_devices() -> Result<(), &'static str>;
-
-    /// Access a UART by index
-    ///
-    /// Executes the closure with mutable access to the specified UART.
-    /// Returns None if the UART index is invalid.
-    ///
-    /// # Arguments
-    /// - `index`: UART index (0 = primary UART, 1+ = auxiliary UARTs if available)
-    /// - `f`: Closure that receives mutable reference to the UART
-    ///
-    /// # Safety
-    /// Caller must ensure the UART is properly initialized before use.
-    fn with_uart<R>(index: usize, f: impl FnOnce(&mut dyn SerialPort) -> R) -> Option<R>;
 }
 
 // Platform selection based on Cargo features

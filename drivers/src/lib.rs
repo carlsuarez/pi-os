@@ -32,6 +32,9 @@
 #![no_std]
 #![allow(dead_code)]
 
+extern crate alloc;
+pub mod console;
+pub mod device_manager;
 pub mod hal;
 pub mod peripheral;
 pub mod platform;
@@ -41,5 +44,3 @@ pub use hal::gpio::{GpioController, PinLevel};
 pub use hal::interrupt::InterruptController;
 pub use hal::serial::{SerialConfig, SerialPort};
 pub use hal::timer::Timer;
-
-extern crate alloc;

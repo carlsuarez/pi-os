@@ -1,5 +1,8 @@
 use crate::arch::arm::exception::TrapFrame;
-use drivers::platform::{CurrentPlatform, Platform};
+use drivers::{
+    console::console_write,
+    platform::{CurrentPlatform as Platform, Platform as PlatformTrait},
+};
 pub type IrqHandler = fn(&mut TrapFrame);
 
 const MAX_IRQS: usize = 128;
@@ -17,9 +20,9 @@ pub(crate) fn get_handler(irq: u32) -> Option<IrqHandler> {
 }
 
 pub fn timer(_tf: &mut TrapFrame) {
-    CurrentPlatform::timer_clear();
-    CurrentPlatform::console_write("Timer interrupt");
-    CurrentPlatform::timer_start(1_000_000); // 1 second
+    Platform::timer_clear();
+    console_write("Timer interrupt\n");
+    Platform::timer_start(1_000_000); // 1 second
 }
 
 pub fn uart(_tf: &mut TrapFrame) {}
