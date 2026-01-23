@@ -1,4 +1,9 @@
-//! ARMv6/ARMv7 Style Memory Barriers
+//! ARM Architecture Support
+//! Architecture-specific utilities and helpers.
+pub mod context;
+pub mod exception;
+pub mod interrupt;
+pub mod mmu;
 
 /// Data Synchronization Barrier (DSB)
 ///
