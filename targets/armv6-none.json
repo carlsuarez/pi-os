@@ -14,8 +14,8 @@
   "relocation-model": "static",
   "panic-strategy": "abort",
   "disable-redzone": true,
-  "target-pointer-width": "32",
-  "target-c-int-width": "32",
+  "target-pointer-width": 32,
+  "target-c-int-width": 32,
   "max-atomic-width": 32,
   "emit-debug-gdb-scripts": false,
   "eh-frame-header": false
