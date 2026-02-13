@@ -1,6 +1,7 @@
 use super::stack::KernelStack;
 use crate::fs::fd::FileDescriptorTable;
 use crate::mm::page_table::L1Table;
+use crate::process::stack::UserStack;
 use alloc::string::String;
 
 cfg_if::cfg_if! {
@@ -44,8 +45,8 @@ pub struct Process {
     /// Kernel stack
     pub kernel_stack: KernelStack,
 
-    /// User stack pointer
-    pub user_stack_ptr: usize,
+    /// User stack
+    pub user_stack: UserStack,
 
     /// Process name
     pub name: String,
