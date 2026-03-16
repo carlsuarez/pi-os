@@ -245,7 +245,11 @@ impl FileDescriptorTable {
 
     pub fn dup(&mut self, oldfd: Fd) -> Result<Fd, FdError> {
         let fd_entry = self.get(oldfd)?;
-        self.alloc(fd_entry.file().clone(), fd_entry.flags(), fd_entry.access())
+        self.alloc(
+            Arc::clone(fd_entry.file()),
+            fd_entry.flags(),
+            fd_entry.access(),
+        )
     }
 
     pub fn dup2(&mut self, oldfd: Fd, newfd: Fd) -> Result<Fd, FdError> {
@@ -253,7 +257,7 @@ impl FileDescriptorTable {
             return Ok(newfd);
         }
         let fd_entry = self.get(oldfd)?;
-        let file = fd_entry.file().clone();
+        let file: Arc<dyn File> = Arc::clone(fd_entry.file());
         let flags = fd_entry.flags();
         let access = fd_entry.access();
 
@@ -312,7 +316,7 @@ impl From<FdError> for FsError {
             FdError::IoError => FsError::IoError,
             FdError::NotSupported => FsError::NotSupported,
             FdError::PermissionDenied => FsError::PermissionDenied,
-            other => FsError::Unknown,
+            _ => FsError::Unknown,
         }
     }
 }

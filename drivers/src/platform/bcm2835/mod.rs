@@ -6,7 +6,7 @@ mod mailbox;
 mod timer;
 
 use super::{MemoryMap, Platform};
-use crate::device_manager::{self, Device, DeviceManager, devices};
+use crate::device_manager::{Device, DeviceManager};
 use crate::hal::framebuffer::FrameBufferConfig;
 use crate::hal::gpio::PullMode;
 use crate::peripheral::pl011::PL011;

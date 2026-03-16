@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["kernel", "drivers", "common"]
+members = ["common", "drivers", "kernel", "user"]
 
 [profile.dev]
 debug = true

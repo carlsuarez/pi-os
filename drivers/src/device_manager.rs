@@ -56,21 +56,21 @@ impl DeviceManager {
 
     pub fn serial(&self, name: &str) -> Option<Arc<SpinLock<Box<dyn SerialPort + Send>>>> {
         match self.get(name)? {
-            Device::Serial(serial) => Some(serial.clone()),
+            Device::Serial(serial) => Some(Arc::clone(serial)),
             _ => None,
         }
     }
 
     pub fn block(&self, name: &str) -> Option<Arc<dyn BlockDevice>> {
         match self.get(name)? {
-            Device::Block(block) => Some(block.clone()),
+            Device::Block(block) => Some(Arc::clone(block)),
             _ => None,
         }
     }
 
     pub fn framebuffer(&self, name: &str) -> Option<Arc<SpinLock<Box<dyn FrameBuffer>>>> {
         match self.get(name)? {
-            Device::FrameBuffer(fb) => Some(fb.clone()),
+            Device::FrameBuffer(fb) => Some(Arc::clone(fb)),
             _ => None,
         }
     }

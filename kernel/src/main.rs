@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
-#[allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 extern crate alloc;
 
 mod arch;
@@ -16,14 +16,12 @@ mod syscall;
 
 use crate::fs::FileSystem;
 use crate::fs::fat::fat32::*;
-use crate::fs::fd::{AccessMode, Fd, FdFlags, FileDescriptorTable};
+use crate::fs::fd::{AccessMode, FdFlags, FileDescriptorTable};
 use crate::{fs::vfs::vfs, irq::handlers};
 use alloc::sync::Arc;
 use core::panic::PanicInfo;
-use drivers::console::console_write;
 use drivers::device_manager::devices;
 use drivers::hal::block_device::BlockDevice;
-use drivers::kprint;
 use drivers::kprintln;
 use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
 
