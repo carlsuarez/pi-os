@@ -7,11 +7,12 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use common::sync::{RwLock, SpinLock};
+use core::sync::atomic::AtomicU32;
 use drivers::hal::block_device::BlockDevice;
 
 /// FAT32 filesystem implementation
 #[derive(Clone)]
-pub struct Fat32Fs {
+pub struct Fat32FsInner {
     dev: Arc<dyn BlockDevice>,
     fat_info: FatInfo,
     // Protects metadata operations (create, delete, mkdir, rmdir)
@@ -90,16 +91,16 @@ impl FatInfo {
 
 /// FAT32 file handle
 pub struct Fat32File {
-    fs: Arc<Fat32Fs>,
+    fs: Arc<Fat32FsInner>,
     start_cluster: u32,
-    size: Arc<SpinLock<u32>>, // Mutable size for extending
+    size: Arc<AtomicU32>, // Mutable size for extending
     name: String,
     // Protects concurrent I/O operations on this file
-    io_lock: SpinLock<()>,
+    io_lock: RwLock<()>,
 }
 
 impl Fat32File {
-    pub fn new(fs: Arc<Fat32Fs>, start_cluster: u32, size: u32, name: String) -> Self {
+    pub fn new(fs: Arc<Fat32FsInner>, start_cluster: u32, size: u32, name: String) -> Self {
         // Validate cluster for non-empty files
         if start_cluster < 2 && size > 0 {
             panic!("Invalid cluster {} for non-empty file", start_cluster);
@@ -108,27 +109,28 @@ impl Fat32File {
         Self {
             fs,
             start_cluster,
-            size: Arc::new(SpinLock::new(size)),
+            size: Arc::new(AtomicU32::new(size)),
             name,
-            io_lock: SpinLock::new(()),
+            io_lock: RwLock::new(()),
         }
     }
 
     /// Get current file size
     fn get_size(&self) -> u32 {
-        *self.size.lock()
+        self.size.load(core::sync::atomic::Ordering::Acquire)
     }
 
     /// Set file size (internal use only)
     fn set_size(&self, new_size: u32) {
-        *self.size.lock() = new_size;
+        self.size
+            .store(new_size, core::sync::atomic::Ordering::Release);
     }
 }
 
 impl File for Fat32File {
     fn read(&self, buf: &mut [u8], offset: usize) -> Result<usize, FdError> {
         // Lock to prevent reading during concurrent write
-        let _guard = self.io_lock.lock();
+        let _guard = self.io_lock.read();
 
         let file_size = self.get_size() as usize;
 
@@ -189,7 +191,7 @@ impl File for Fat32File {
 
     fn write(&self, buf: &[u8], offset: usize) -> Result<usize, FdError> {
         // Lock to prevent concurrent writes or reads during write
-        let _guard = self.io_lock.lock();
+        let _guard = self.io_lock.write();
 
         let bytes_to_write = buf.len();
         if bytes_to_write == 0 {
@@ -272,7 +274,7 @@ impl File for Fat32File {
     }
 }
 
-impl Fat32Fs {
+impl Fat32FsInner {
     pub fn mount(dev: Arc<dyn BlockDevice>) -> Result<Arc<Self>, Fat32Error> {
         let mut mbr = [0u8; 512];
         dev.read_block(0, &mut mbr)
@@ -327,7 +329,7 @@ impl Fat32Fs {
         }
 
         Ok(Fat32File::new(
-            self.clone(),
+            Arc::clone(self),
             entry.first_cluster,
             entry.size,
             entry.name,
@@ -709,42 +711,46 @@ fn parse_83(raw: &[u8]) -> String {
 // FileSystem Trait Implementation
 // ============================================================================
 
+pub struct Fat32Fs(Arc<Fat32FsInner>);
+
 impl FileSystem for Fat32Fs {
     fn open(&self, path: &str) -> Result<Arc<dyn File>, FsError> {
-        let file = Fat32Fs::open(&Arc::new(self.clone()), path)?;
+        let file = Fat32FsInner::open(&self.0, path)?;
         Ok(Arc::new(file))
     }
 
     fn create(&self, _p: &str) -> Result<Arc<dyn File>, FsError> {
-        let _guard = self.metadata_lock.write();
-        // TODO: Implement file creation
-        Err(FsError::NotSupported)
+        let _guard = self.0.metadata_lock.write();
+        todo!()
     }
 
     fn delete(&self, _p: &str) -> Result<(), FsError> {
-        let _guard = self.metadata_lock.write();
-        // TODO: Implement file deletion
-        Err(FsError::NotSupported)
+        let _guard = self.0.metadata_lock.write();
+        todo!()
     }
 
     fn ls(&self, p: &str) -> Result<Vec<String>, FsError> {
-        Ok(Fat32Fs::ls(self, p)?)
+        Ok(Fat32FsInner::ls(&*self.0, p)?)
     }
 
     fn mkdir(&self, _p: &str) -> Result<(), FsError> {
-        let _guard = self.metadata_lock.write();
-        // TODO: Implement directory creation
-        Err(FsError::NotSupported)
+        let _guard = self.0.metadata_lock.write();
+        todo!()
     }
 
     fn rmdir(&self, _p: &str) -> Result<(), FsError> {
-        let _guard = self.metadata_lock.write();
-        // TODO: Implement directory removal
-        Err(FsError::NotSupported)
+        let _guard = self.0.metadata_lock.write();
+        todo!()
     }
 
     fn stat(&self, p: &str) -> Result<FileStat, FsError> {
-        Ok(Fat32Fs::stat(self, p)?)
+        Ok(Fat32FsInner::stat(&*self.0, p)?)
+    }
+}
+
+impl Fat32Fs {
+    pub fn mount(dev: Arc<dyn BlockDevice>) -> Result<Arc<Self>, Fat32Error> {
+        Ok(Arc::new(Self(Fat32FsInner::mount(dev)?)))
     }
 }
 
