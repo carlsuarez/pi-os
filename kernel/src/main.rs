@@ -116,11 +116,7 @@ pub extern "C" fn kernel_main() -> ! {
 // ============================================================================
 
 fn kernel_main_loop() -> ! {
-    loop {
-        // Wait for interrupt
-        crate::arch::arm::wfi();
-        // Process pending work here
-    }
+    loop {}
 }
 
 // ============================================================================

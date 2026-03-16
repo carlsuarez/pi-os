@@ -1,0 +1,4 @@
+kernel=kernel.img
+kernel_address=0x8000
+disable_commandline_tags=1
+arm_freq=1000
