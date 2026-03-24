@@ -1,9 +1,9 @@
 use super::super::file::{File, FileStat};
 use crate::fs::fd::FdError;
 use crate::fs::file::FileType;
+use crate::subsystems::device_manager;
 use alloc::format;
 use alloc::string::String;
-use drivers::device_manager::devices;
 use drivers::hal::framebuffer::FrameBuffer;
 
 /// File wrapper around a framebuffer device
@@ -21,7 +21,7 @@ impl FrameBufferFile {
     pub fn new(index: usize) -> Result<Self, FdError> {
         let name = format!("fb{}", index);
 
-        let fb = devices()
+        let fb = device_manager()
             .lock()
             .framebuffer(&name)
             .ok_or(FdError::Other("No such device".into()))?;
@@ -60,9 +60,9 @@ impl File for FrameBufferFile {
     fn read(&self, buf: &mut [u8], offset: usize) -> Result<usize, FdError> {
         self.validate_offset(offset)?;
 
-        let fb = devices()
+        let fb = device_manager()
             .lock()
-            .framebuffer(&self.device_name())
+            .framebuffer(&self.device_name().as_str())
             .ok_or(FdError::Other("No such device".into()))?;
 
         let fb = fb.lock();
@@ -84,9 +84,9 @@ impl File for FrameBufferFile {
     fn write(&self, buf: &[u8], offset: usize) -> Result<usize, FdError> {
         self.validate_offset(offset)?;
 
-        let fb = devices()
+        let fb = device_manager()
             .lock()
-            .framebuffer(&self.device_name())
+            .framebuffer(&self.device_name().as_str())
             .ok_or(FdError::Other("No such device".into()))?;
 
         let fb = fb.lock();

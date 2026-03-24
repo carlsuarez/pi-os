@@ -8,12 +8,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use common::sync::{RwLock, SpinLock};
 use core::sync::atomic::AtomicU32;
-use drivers::hal::block_device::BlockDevice;
+use drivers::hal::block_device::DynBlockDevice;
 
 /// FAT32 filesystem implementation
 #[derive(Clone)]
 pub struct Fat32FsInner {
-    dev: Arc<dyn BlockDevice>,
+    dev: Arc<dyn DynBlockDevice>,
     fat_info: FatInfo,
     // Protects metadata operations (create, delete, mkdir, rmdir)
     metadata_lock: Arc<RwLock<()>>,
@@ -275,7 +275,7 @@ impl File for Fat32File {
 }
 
 impl Fat32FsInner {
-    pub fn mount(dev: Arc<dyn BlockDevice>) -> Result<Arc<Self>, Fat32Error> {
+    pub fn mount(dev: Arc<dyn DynBlockDevice>) -> Result<Arc<Self>, Fat32Error> {
         let mut mbr = [0u8; 512];
         dev.read_block(0, &mut mbr)
             .map_err(|_| Fat32Error::ReadError)?;
@@ -749,7 +749,7 @@ impl FileSystem for Fat32Fs {
 }
 
 impl Fat32Fs {
-    pub fn mount(dev: Arc<dyn BlockDevice>) -> Result<Arc<Self>, Fat32Error> {
+    pub fn mount(dev: Arc<dyn DynBlockDevice>) -> Result<Arc<Self>, Fat32Error> {
         Ok(Arc::new(Self(Fat32FsInner::mount(dev)?)))
     }
 }

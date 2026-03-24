@@ -50,6 +50,17 @@ impl<T: ?Sized> RwLock<T> {
     }
 }
 
+impl RwLock<[()]> {
+    /// Creates a new `RwLock` wrapping the provided data.
+    pub const fn new<T>(data: T) -> RwLock<T> {
+        RwLock {
+            reader_count: AtomicUsize::new(0),
+            writer_lock: AtomicBool::new(false),
+            data: UnsafeCell::new(data),
+        }
+    }
+}
+
 /// A guard that provides access to the data protected by a `RwLock`.
 ///
 /// This guard is returned by `RwLock::read` and `RwLock::write`. It releases the lock or decrements the reader count

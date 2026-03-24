@@ -201,11 +201,11 @@ unsafe fn setup_memory_management() {
 #[cfg(target_arch = "x86")]
 unsafe fn get_kernel_end_address() -> usize {
     unsafe extern "C" {
-        static _bss_end: u8;
+        static bss_end: u8;
     }
-    let bss_end = core::ptr::addr_of!(_bss_end) as usize;
-    if bss_end > 0x100000 && bss_end < 0x6400000 {
-        bss_end
+    let bss_end_addr = core::ptr::addr_of!(bss_end) as usize;
+    if bss_end_addr > 0x100000 && bss_end_addr < 0x6400000 {
+        bss_end_addr
     } else {
         0x100000 + 2 * 1024 * 1024
     }

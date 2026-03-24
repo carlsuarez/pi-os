@@ -15,7 +15,7 @@ mod process;
 mod subsystems;
 mod syscall;
 
-use crate::arch::PlatformIrq;
+use crate::arch::Irq;
 use crate::fs::FileSystem;
 use crate::fs::fat::fat32::*;
 use crate::fs::fd::{AccessMode, FdFlags, FileDescriptorTable};
@@ -76,6 +76,6 @@ fn panic(info: &PanicInfo) -> ! {
     kprintln!("System halted.");
 
     loop {
-        PlatformIrq::wait_for_interrupt();
+        Irq::wait_for_interrupt();
     }
 }

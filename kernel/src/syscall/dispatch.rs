@@ -1,3 +1,3 @@
-use crate::arch::arm::exception::TrapFrame;
+use crate::arch::TrapFrame;
 
 pub fn dispatch(_tf: &TrapFrame) {}

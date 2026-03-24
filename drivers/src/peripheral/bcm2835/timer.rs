@@ -33,15 +33,16 @@ impl Channel {
     fn bitmask(self) -> u32 {
         1 << (self as u32)
     }
+}
 
-    /// Convert from usize handle (for DynTimer).
-    fn from_usize(handle: usize) -> Result<Self, Bcm2835TimerError> {
-        match handle {
-            0 => Ok(Channel::Channel0),
-            1 => Ok(Channel::Channel1),
-            2 => Ok(Channel::Channel2),
-            3 => Ok(Channel::Channel3),
-            _ => Err(Bcm2835TimerError::InvalidChannel),
+impl From<usize> for Channel {
+    fn from(value: usize) -> Self {
+        match value {
+            0 => Channel::Channel0,
+            1 => Channel::Channel1,
+            2 => Channel::Channel2,
+            3 => Channel::Channel3,
+            _ => panic!("Invalid channel number: {}", value),
         }
     }
 }
@@ -210,22 +211,22 @@ impl CountingTimer for Bcm2835Timer {
 
 impl DynTimer for Bcm2835Timer {
     fn start(&mut self, handle: usize, interval_us: u32) -> Result<(), TimerError> {
-        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        let channel = Channel::from(handle);
         Timer::start(self, channel, interval_us).map_err(TimerError::from)
     }
 
     fn stop(&mut self, handle: usize) -> Result<(), TimerError> {
-        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        let channel = Channel::from(handle);
         Timer::stop(self, channel).map_err(TimerError::from)
     }
 
     fn clear_interrupt(&mut self, handle: usize) -> Result<(), TimerError> {
-        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        let channel = Channel::from(handle);
         Timer::clear_interrupt(self, channel).map_err(TimerError::from)
     }
 
     fn is_pending(&self, handle: usize) -> Result<bool, TimerError> {
-        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        let channel = Channel::from(handle);
         Timer::is_pending(self, channel).map_err(TimerError::from)
     }
 }

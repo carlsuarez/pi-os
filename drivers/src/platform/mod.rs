@@ -279,7 +279,7 @@ impl Platform {
                     // --------------------------------------------------------
                     "brcm,bcm2835-system-timer" => {
                         let timer = bcm2835::timer::Bcm2835Timer::new(device.base_addr);
-                        device_mgr.register_timer(device.name, timer)?;
+                        device_mgr.register_timer(device.name, timer, Some(1))?;
                     }
 
                     "arm,armv7-timer" | "arm,armv8-timer" => {
@@ -376,7 +376,7 @@ impl Platform {
         Ok(())
     }
 
-    unsafe fn discover_from_device_tree(dtb_addr: usize) -> Result<(), &'static str> {
+    unsafe fn discover_from_device_tree(_dtb_addr: usize) -> Result<(), &'static str> {
         #[cfg(feature = "device-tree")]
         {
             use fdt::Fdt;

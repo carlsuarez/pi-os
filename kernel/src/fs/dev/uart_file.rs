@@ -1,7 +1,8 @@
 use super::super::file::{File, FileStat, FileType};
 use crate::fs::fd::FdError;
+use crate::subsystems::device_manager;
 use alloc::string::String;
-use drivers::device_manager::devices;
+use drivers::hal::serial::DynSerialPort;
 
 /// UART device file - provides file interface to serial ports
 pub struct UartFile {
@@ -29,24 +30,22 @@ impl UartFile {
 
 impl File for UartFile {
     fn read(&self, buf: &mut [u8], _offset: usize) -> Result<usize, FdError> {
-        let device_mgr = devices().lock();
+        let device_mgr = device_manager().lock();
         let serial = device_mgr
-            .serial(&self.device_name())
+            .serial(&self.device_name().as_str())
             .ok_or(FdError::IoError)?;
 
-        let mut uart = serial.lock();
-
-        if let Some(nb) = uart.as_nonblocking() {
+        if let Some(nb) = serial.lock().as_dyn_nonblocking() {
             return nb.try_read(buf).map_err(|_| FdError::IoError);
         } else {
-            return uart.read(buf).map_err(|_| FdError::IoError);
+            return serial.lock().read(buf).map_err(|_| FdError::IoError);
         }
     }
 
     fn write(&self, buf: &[u8], _offset: usize) -> Result<usize, FdError> {
-        let device_mgr = devices().lock();
+        let device_mgr = device_manager().lock();
         let serial = device_mgr
-            .serial(&self.device_name())
+            .serial(&self.device_name().as_str())
             .ok_or(FdError::IoError)?;
 
         let mut uart = serial.lock();

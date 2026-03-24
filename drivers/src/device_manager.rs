@@ -32,6 +32,17 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use common::sync::SpinLock;
+use core::cell::OnceCell;
+
+struct OnceCellChannel {
+    inner: OnceCell<usize>,
+}
+
+unsafe impl Sync for OnceCellChannel {}
+
+static SYS_TIMER_CHANNEL: OnceCellChannel = OnceCellChannel {
+    inner: OnceCell::new(),
+};
 
 /// Device types that can be managed
 pub enum Device {
@@ -184,6 +195,11 @@ impl DeviceManager {
             })
     }
 
+    /// Get the system timer channel if set
+    pub fn sys_timer_channel() -> Option<usize> {
+        SYS_TIMER_CHANNEL.inner.get().copied()
+    }
+
     /// Get the interrupt controller (default)
     ///
     /// Tries in order: "intc", "pic", "gic", first interrupt controller
@@ -240,7 +256,14 @@ impl DeviceManager {
         &mut self,
         name: impl Into<String>,
         timer: T,
+        sys_channel: Option<usize>,
     ) -> Result<(), &'static str> {
+        if let Some(channel) = sys_channel {
+            SYS_TIMER_CHANNEL
+                .inner
+                .set(channel)
+                .map_err(|_| "System timer channel already set")?;
+        }
         self.register(name.into(), Device::new_timer(timer));
         Ok(())
     }

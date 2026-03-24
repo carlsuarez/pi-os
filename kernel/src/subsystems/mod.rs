@@ -26,7 +26,11 @@ pub unsafe fn init(boot_info: drivers::platform::BootInfo) {
 
     unsafe {
         drivers::platform::Platform::init(boot_info).expect("Platform initialization failed");
-        drivers::platform::Platform::init_devices(&mut *DEVICE_MANAGER.inner.get().unwrap().lock());
+        if let Err(e) = drivers::platform::Platform::init_devices(
+            &mut *DEVICE_MANAGER.inner.get().unwrap().lock(),
+        ) {
+            panic!("{}", e);
+        }
     }
 }
 
@@ -67,7 +71,7 @@ pub fn print_devices() {
 #[inline(always)]
 pub fn console_write(s: &str) {
     if let Some(console) = console() {
-        console.lock().write(s.as_bytes());
+        let _ = console.lock().write(s.as_bytes());
     }
 }
 

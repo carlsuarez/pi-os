@@ -1,8 +1,7 @@
-use crate::arch::arm::exception::TrapFrame;
-use drivers::{
-    console::console_write,
-    platform::{CurrentPlatform as Platform, Platform as PlatformTrait},
-};
+use drivers::device_manager::DeviceManager;
+
+use crate::arch::TrapFrame;
+use crate::subsystems::{console, system_timer};
 pub type IrqHandler = fn(&mut TrapFrame);
 
 const MAX_IRQS: usize = 128;
@@ -20,9 +19,28 @@ pub(crate) fn get_handler(irq: u32) -> Option<IrqHandler> {
 }
 
 pub fn timer(_tf: &mut TrapFrame) {
-    Platform::timer_clear();
-    console_write("Timer interrupt\n");
-    Platform::timer_start(1_000_000); // 1 second
+    let channel = DeviceManager::sys_timer_channel()
+        .expect("timer IRQ fired but no system timer channel registered");
+
+    let sys_timer = system_timer().expect("timer IRQ fired but no system timer registered");
+
+    let mut timer = sys_timer.lock();
+    timer.stop(channel).expect("failed to stop system timer");
+    timer
+        .clear_interrupt(channel)
+        .expect("failed to clear timer interrupt");
+
+    drop(timer); // release before console write to minimize lock hold time
+
+    let _ = console()
+        .expect("no console registered")
+        .lock()
+        .write(b"Timer interrupt\n");
+
+    sys_timer
+        .lock()
+        .start(channel, 1_000_000)
+        .expect("failed to restart system timer");
 }
 
 pub fn uart(_tf: &mut TrapFrame) {}

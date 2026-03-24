@@ -2,9 +2,9 @@
 //!
 //! Called from architecture-specific exception handlers.
 
-use crate::arch::arm::exception::TrapFrame;
-use crate::arch::arm::interrupt;
-use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
+use crate::arch::{Irq, TrapFrame};
+use crate::subsystems::irq_controller;
+use common::sync::irq::{self, IrqControl};
 
 /// Dispatch an interrupt to its registered handler
 ///
@@ -21,12 +21,13 @@ use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
 /// 4. Disable interrupts for critical exit
 /// 5. Unmask the IRQ
 pub fn dispatch(irq: u32, tf: &mut TrapFrame) {
+    let irqctl = irq_controller().expect("no IRQ controller registered");
     // Mask this specific IRQ line to prevent re-entry
-    Platform::disable_irq(irq);
+    let _ = irqctl.lock().disable(irq);
 
     // Enable CPU interrupts to allow nested interrupts
     // (other IRQs can fire while we handle this one)
-    interrupt::enable();
+    crate::arch::Irq::enable();
 
     // Call the registered handler for this IRQ
     if let Some(handler) = crate::irq::handlers::get_handler(irq) {
@@ -37,10 +38,10 @@ pub fn dispatch(irq: u32, tf: &mut TrapFrame) {
     }
 
     // Enter critical section for cleanup
-    interrupt::disable();
+    Irq::disable();
 
     // Unmask this IRQ line so it can fire again
-    Platform::enable_irq(irq);
+    let _ = irqctl.lock().enable(irq);
 
     // Return to interrupted code
 }
@@ -50,7 +51,7 @@ pub fn dispatch(irq: u32, tf: &mut TrapFrame) {
 /// This can be called from the main interrupt handler to poll
 /// for pending interrupts.
 pub fn dispatch_next(tf: &mut TrapFrame) -> bool {
-    if let Some(irq) = Platform::next_pending_irq() {
+    if let Some(irq) = { irq_controller().unwrap().lock().next_pending() } {
         dispatch(irq, tf);
         true
     } else {

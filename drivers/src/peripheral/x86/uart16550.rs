@@ -30,7 +30,7 @@ impl SerialPort for Uart16550 {
         todo!()
     }
 
-    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
+    fn write_byte(&mut self, _byte: u8) -> Result<(), Self::Error> {
         todo!()
     }
 
