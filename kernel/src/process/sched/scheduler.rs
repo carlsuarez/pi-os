@@ -1,6 +1,6 @@
+use crate::arch::IrqSpinLock;
 use crate::process::pcb::Pid;
 use alloc::collections::VecDeque;
-use common::sync::IrqSpinLock;
 
 const HIGH_QUANTA: usize = 3;
 const MID_QUANTA: usize = 2;

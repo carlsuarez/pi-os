@@ -1,8 +1,13 @@
+//! BCM2835 EMMC Driver
+//!
+//! This module provides a driver for the BCM2835 EMMC peripheral,
+//! which interfaces with SD/SDHC/SDXC cards.
+
 use core::ptr::{read_volatile, write_volatile};
 
 use crate::hal::block_device::{
     BlockDevice, BlockDeviceError, BlockDeviceInfo, CardType, Cid, Csd, CsdParseError, CsdVersion,
-    IdentifiableBlockDevice,
+    DynBlockDevice, IdentifiableBlockDevice,
 };
 
 /// EMMC base address
@@ -122,18 +127,82 @@ const ACMD51: u32 = 51;
 /// Block size (fixed to 512 bytes)
 const BLOCK_SIZE: usize = 512;
 
+// ============================================================================
+// Error Type
+// ============================================================================
+
+/// BCM2835 EMMC-specific errors
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum EmmcError {
+    /// No card inserted
+    NoCard,
+    /// Unsupported or unrecognized card
+    UnsupportedCard,
+    /// Card initialization failed
+    InitFailed,
+    /// Command execution error
+    CommandError,
+    /// Operation timed out
+    Timeout,
+    /// Buffer size is too small
+    BufferTooSmall,
+    /// Read operation failed
+    ReadError,
+    /// Write operation failed
+    WriteError,
+    /// CRC error during data transfer
+    CrcError,
+    /// Hardware error
+    HardwareError,
+}
+
+impl From<EmmcError> for BlockDeviceError {
+    fn from(err: EmmcError) -> Self {
+        match err {
+            EmmcError::NoCard => BlockDeviceError::DeviceRemoved,
+            EmmcError::UnsupportedCard => BlockDeviceError::UnsupportedDevice,
+            EmmcError::InitFailed => BlockDeviceError::NotReady,
+            EmmcError::Timeout => BlockDeviceError::Timeout,
+            EmmcError::BufferTooSmall => BlockDeviceError::InvalidBuffer,
+            EmmcError::ReadError => BlockDeviceError::ReadError,
+            EmmcError::WriteError => BlockDeviceError::WriteError,
+            EmmcError::CrcError => BlockDeviceError::DataError,
+            EmmcError::CommandError => BlockDeviceError::IoError,
+            EmmcError::HardwareError => BlockDeviceError::IoError,
+        }
+    }
+}
+
+impl From<CsdParseError> for EmmcError {
+    fn from(_err: CsdParseError) -> Self {
+        EmmcError::UnsupportedCard
+    }
+}
+
+// ============================================================================
+// BCM2835 EMMC Driver
+// ============================================================================
+
 /// BCM2835 EMMC driver
 pub struct Emmc {
     base: usize,
-    cid: Cid, // Card Identification
-    csd: Csd, // Card Specific Data
-    rca: u32, // Relative Card Address
+    cid: Cid,
+    csd: Csd,
+    rca: u32,
     card_type: CardType,
 }
 
 impl Emmc {
     /// Create new EMMC driver
-    pub const unsafe fn new() -> Self {
+    ///
+    /// # Safety
+    ///
+    /// - EMMC registers must be properly mapped at `EMMC_BASE`
+    /// - Only one instance should exist per EMMC hardware
+    pub const unsafe fn new(base: usize) -> Self {
+        if base != EMMC_BASE {
+            panic!("Invalid base address for BCM2835 EMMC");
+        }
         Self {
             base: EMMC_BASE,
             cid: Cid::default(),
@@ -169,6 +238,7 @@ impl Emmc {
                 }
                 if interrupt & INT_CRC != 0 {
                     self.write_reg(REG_INTERRUPT, INT_CRC);
+                    return Err(EmmcError::CrcError);
                 }
                 if interrupt & INT_INDEX != 0 {
                     self.write_reg(REG_INTERRUPT, INT_INDEX);
@@ -590,7 +660,7 @@ impl Emmc {
 
     fn delay_us(&self, us: u32) {
         // Simple busy wait - should be replaced with proper timer
-        for _ in 0..us {
+        for _ in 0..(us * 50) {
             core::hint::spin_loop();
         }
     }
@@ -611,7 +681,7 @@ impl Emmc {
                 }
                 if interrupt & INT_DATA_CRC != 0 {
                     self.write_reg(REG_INTERRUPT, INT_DATA_CRC);
-                    return Err(EmmcError::ReadError);
+                    return Err(EmmcError::CrcError);
                 }
                 self.write_reg(REG_INTERRUPT, INT_ERROR);
                 return Err(EmmcError::ReadError);
@@ -674,85 +744,34 @@ impl Emmc {
     }
 }
 
+// ============================================================================
+// HAL Implementation (using EmmcError)
+// ============================================================================
+
 impl BlockDevice for Emmc {
+    type Error = EmmcError;
+
     fn info(&self) -> BlockDeviceInfo {
-        // Get block count from CSD and mark as removable (SD cards are removable)
-        BlockDeviceInfo::new(self.csd.block_count()).removable() // SD cards are removable
+        BlockDeviceInfo::new(self.csd.block_count()).removable()
     }
 
-    fn read_block(&self, block: u64, buffer: &mut [u8]) -> Result<(), BlockDeviceError> {
-        // Validate buffer size
-        if buffer.len() < BLOCK_SIZE {
-            return Err(BlockDeviceError::InvalidBuffer);
-        }
-
-        // Validate block address
-        let block_count = self.csd.block_count();
-        if block >= block_count {
-            return Err(BlockDeviceError::InvalidAddress);
-        }
-
-        // Check if device is ready
-        if !self.is_ready() {
-            return Err(BlockDeviceError::NotReady);
-        }
-
-        self.read_block_internal(block as u32, buffer)
-            .map_err(|e| e.into())
-    }
-
-    fn write_block(&self, block: u64, buffer: &[u8]) -> Result<(), BlockDeviceError> {
-        // Validate buffer size
-        if buffer.len() < BLOCK_SIZE {
-            return Err(BlockDeviceError::InvalidBuffer);
-        }
-
-        // Validate block address
-        let block_count = self.csd.block_count();
-        if block >= block_count {
-            return Err(BlockDeviceError::InvalidAddress);
-        }
-
-        // Check if device is ready
-        if !self.is_ready() {
-            return Err(BlockDeviceError::NotReady);
-        }
-
-        self.write_block_internal(block as u32, buffer)
-            .map_err(|e| e.into())
-    }
-
-    fn flush(&mut self) -> Result<(), BlockDeviceError> {
-        // For SD cards, writes are typically immediate, but we could send CMD13 to check status
-        Ok(())
-    }
-
-    fn is_ready(&self) -> bool {
-        let status = self.read_reg(REG_STATUS);
-        (status & STATUS_CARD_INSERTED) != 0 && (status & STATUS_CARD_STATE_STABLE) != 0
-    }
-
-    fn read_blocks(
-        &self,
-        start_block: u64,
-        buffers: &mut [&mut [u8]],
-    ) -> Result<(), BlockDeviceError> {
+    fn read_blocks(&self, start_block: u64, buffers: &mut [&mut [u8]]) -> Result<(), Self::Error> {
         // Validate all buffers
         for buffer in buffers.iter() {
             if buffer.len() < BLOCK_SIZE {
-                return Err(BlockDeviceError::InvalidBuffer);
+                return Err(EmmcError::BufferTooSmall);
             }
         }
 
         // Validate block range
         let block_count = self.csd.block_count();
         if start_block + buffers.len() as u64 > block_count {
-            return Err(BlockDeviceError::InvalidAddress);
+            return Err(EmmcError::ReadError);
         }
 
         // Check if device is ready
-        if !self.is_ready() {
-            return Err(BlockDeviceError::NotReady);
+        if !<Self as BlockDevice>::is_ready(self) {
+            return Err(EmmcError::NoCard);
         }
 
         // Read each block
@@ -763,23 +782,23 @@ impl BlockDevice for Emmc {
         Ok(())
     }
 
-    fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), BlockDeviceError> {
+    fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), Self::Error> {
         // Validate all buffers
         for buffer in buffers.iter() {
             if buffer.len() < BLOCK_SIZE {
-                return Err(BlockDeviceError::InvalidBuffer);
+                return Err(EmmcError::BufferTooSmall);
             }
         }
 
         // Validate block range
         let block_count = self.csd.block_count();
         if start_block + buffers.len() as u64 > block_count {
-            return Err(BlockDeviceError::InvalidAddress);
+            return Err(EmmcError::WriteError);
         }
 
         // Check if device is ready
-        if !self.is_ready() {
-            return Err(BlockDeviceError::NotReady);
+        if !<Self as BlockDevice>::is_ready(self) {
+            return Err(EmmcError::NoCard);
         }
 
         // Write each block
@@ -788,6 +807,16 @@ impl BlockDevice for Emmc {
         }
 
         Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        // For SD cards, writes are typically immediate
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        let status = self.read_reg(REG_STATUS);
+        (status & STATUS_CARD_INSERTED) != 0 && (status & STATUS_CARD_STATE_STABLE) != 0
     }
 }
 
@@ -801,41 +830,37 @@ impl IdentifiableBlockDevice for Emmc {
     }
 }
 
-// Ensure Emmc is Send + Sync for thread safety
-// This is safe because we're accessing memory-mapped registers which
-// have synchronized access through the hardware
+// ============================================================================
+// Type-Erased Block Device Implementation
+// ============================================================================
+
+impl DynBlockDevice for Emmc {
+    fn info(&self) -> BlockDeviceInfo {
+        BlockDevice::info(self)
+    }
+
+    fn read_blocks(
+        &self,
+        start_block: u64,
+        buffers: &mut [&mut [u8]],
+    ) -> Result<(), BlockDeviceError> {
+        BlockDevice::read_blocks(self, start_block, buffers).map_err(BlockDeviceError::from)
+    }
+
+    fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), BlockDeviceError> {
+        BlockDevice::write_blocks(self, start_block, buffers).map_err(BlockDeviceError::from)
+    }
+
+    fn flush(&mut self) -> Result<(), BlockDeviceError> {
+        BlockDevice::flush(self).map_err(BlockDeviceError::from)
+    }
+
+    fn is_ready(&self) -> bool {
+        BlockDevice::is_ready(self)
+    }
+}
+
+// SAFETY: EMMC wraps memory-mapped hardware that can be safely
+// accessed from any thread when protected by synchronization.
 unsafe impl Send for Emmc {}
 unsafe impl Sync for Emmc {}
-
-#[derive(Debug)]
-pub enum EmmcError {
-    NoCard,
-    UnsupportedCard,
-    InitFailed,
-    CommandError,
-    Timeout,
-    BufferTooSmall,
-    ReadError,
-    WriteError,
-}
-
-impl From<EmmcError> for BlockDeviceError {
-    fn from(err: EmmcError) -> Self {
-        match err {
-            EmmcError::NoCard => BlockDeviceError::DeviceRemoved,
-            EmmcError::UnsupportedCard => BlockDeviceError::UnsupportedDevice,
-            EmmcError::InitFailed => BlockDeviceError::Other,
-            EmmcError::Timeout => BlockDeviceError::Timeout,
-            EmmcError::BufferTooSmall => BlockDeviceError::InvalidBuffer,
-            EmmcError::ReadError => BlockDeviceError::ReadError,
-            EmmcError::WriteError => BlockDeviceError::WriteError,
-            EmmcError::CommandError => BlockDeviceError::Other,
-        }
-    }
-}
-
-impl From<CsdParseError> for EmmcError {
-    fn from(_err: CsdParseError) -> Self {
-        EmmcError::UnsupportedCard
-    }
-}

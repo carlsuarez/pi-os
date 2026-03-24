@@ -18,7 +18,7 @@ pub struct KernelStack {
 impl KernelStack {
     /// Allocate a new kernel stack
     pub fn new() -> Result<Self, StackError> {
-        let block = crate::mm::page_allocator::PAGE_ALLOCATOR
+        let block = crate::mm::page_allocator::page_allocator()
             .alloc_block::<KERNEL_STACK_ORDER>()
             .ok_or(StackError::OutOfMemory)?;
 
@@ -58,7 +58,7 @@ pub struct UserStack {
 impl UserStack {
     /// Allocate a new user stack
     pub fn new() -> Result<Self, StackError> {
-        let block = crate::mm::page_allocator::PAGE_ALLOCATOR
+        let block = crate::mm::page_allocator::page_allocator()
             .alloc_block::<USER_STACK_ORDER>()
             .ok_or(StackError::OutOfMemory)?;
 

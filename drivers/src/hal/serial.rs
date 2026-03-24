@@ -86,20 +86,27 @@ pub enum SerialError {
     Other,
 }
 
+// ============================================================================
+// Serial Port Trait
+// ============================================================================
+
 /// Serial port trait.
 ///
 /// This trait provides the core interface for serial communication.
 pub trait SerialPort: Send + Sync {
+    /// Error type for this serial port implementation.
+    type Error: core::fmt::Debug;
+
     /// Configure the serial port.
     ///
     /// This must be called before using the serial port.
-    fn configure(&mut self, config: SerialConfig) -> Result<(), SerialError>;
+    fn configure(&mut self, config: SerialConfig) -> Result<(), Self::Error>;
 
     /// Write a single byte (blocking).
-    fn write_byte(&mut self, byte: u8) -> Result<(), SerialError>;
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error>;
 
     /// Write multiple bytes (blocking).
-    fn write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
+    fn write(&mut self, bytes: &[u8]) -> Result<usize, Self::Error> {
         for &byte in bytes {
             self.write_byte(byte)?;
         }
@@ -107,10 +114,10 @@ pub trait SerialPort: Send + Sync {
     }
 
     /// Read a single byte (blocking).
-    fn read_byte(&mut self) -> Result<u8, SerialError>;
+    fn read_byte(&mut self) -> Result<u8, Self::Error>;
 
     /// Read multiple bytes (blocking).
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
         for byte in buffer.iter_mut() {
             *byte = self.read_byte()?;
         }
@@ -118,24 +125,23 @@ pub trait SerialPort: Send + Sync {
     }
 
     /// Flush the write buffer.
-    fn flush(&mut self) -> Result<(), SerialError>;
+    fn flush(&mut self) -> Result<(), Self::Error>;
 
     /// Check if the serial port is busy transmitting.
     fn is_busy(&self) -> bool;
-
-    // Capability hooks
-    fn as_nonblocking(&mut self) -> Option<&mut dyn NonBlockingSerial> {
-        None
-    }
 }
+
+// ============================================================================
+// Non-Blocking Extension
+// ============================================================================
 
 /// Extension trait for non-blocking operations.
 pub trait NonBlockingSerial: SerialPort {
     /// Try to write a byte without blocking.
-    fn try_write_byte(&mut self, byte: u8) -> Result<(), SerialError>;
+    fn try_write_byte(&mut self, byte: u8) -> Result<(), Self::Error>;
 
     /// Try to write multiple bytes without blocking
-    fn try_write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
+    fn try_write(&mut self, bytes: &[u8]) -> Result<usize, Self::Error> {
         for &byte in bytes {
             self.try_write_byte(byte)?;
         }
@@ -143,14 +149,78 @@ pub trait NonBlockingSerial: SerialPort {
     }
 
     /// Try to read a byte without blocking.
-    fn try_read_byte(&mut self) -> Result<u8, SerialError>;
+    fn try_read_byte(&mut self) -> Result<u8, Self::Error>;
 
     /// Try to read multiple bytes without blocking
+    fn try_read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        for byte in buffer.iter_mut() {
+            *byte = self.try_read_byte()?;
+        }
+        Ok(buffer.len())
+    }
+}
+
+// ============================================================================
+// Type-Erased Serial Port
+// ============================================================================
+
+/// Type-erased serial port trait using `SerialError`.
+pub trait DynSerialPort: Send + Sync {
+    fn configure(&mut self, config: SerialConfig) -> Result<(), SerialError>;
+    fn write_byte(&mut self, byte: u8) -> Result<(), SerialError>;
+    fn write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
+        for &byte in bytes {
+            self.write_byte(byte)?;
+        }
+        Ok(bytes.len())
+    }
+    fn read_byte(&mut self) -> Result<u8, SerialError>;
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
+        for byte in buffer.iter_mut() {
+            *byte = self.read_byte()?;
+        }
+        Ok(buffer.len())
+    }
+    fn flush(&mut self) -> Result<(), SerialError>;
+    fn is_busy(&self) -> bool;
+    fn as_dyn_nonblocking(&mut self) -> Option<&mut dyn DynNonBlockingSerial> {
+        None
+    }
+}
+
+/// Type-erased non-blocking serial port trait using `SerialError`.
+pub trait DynNonBlockingSerial: DynSerialPort {
+    fn try_write_byte(&mut self, byte: u8) -> Result<(), SerialError>;
+    fn try_write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
+        for &byte in bytes {
+            self.try_write_byte(byte)?;
+        }
+        Ok(bytes.len())
+    }
+    fn try_read_byte(&mut self) -> Result<u8, SerialError>;
     fn try_read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
         for byte in buffer.iter_mut() {
             *byte = self.try_read_byte()?;
         }
         Ok(buffer.len())
+    }
+}
+
+// ============================================================================
+// core::fmt::Write Implementation
+// ============================================================================
+
+/// Implement core::fmt::Write for any DynSerialPort
+impl fmt::Write for dyn DynSerialPort {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for byte in s.bytes() {
+            // Convert line endings
+            if byte == b'\n' {
+                self.write_byte(b'\r').map_err(|_| fmt::Error)?;
+            }
+            self.write_byte(byte).map_err(|_| fmt::Error)?;
+        }
+        Ok(())
     }
 }
 

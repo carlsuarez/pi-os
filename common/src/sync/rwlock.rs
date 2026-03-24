@@ -11,32 +11,17 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// # Type Parameters
 ///
 /// * `T` - The type of data protected by the read-write lock.
-pub struct RwLock<T> {
+pub struct RwLock<T: ?Sized> {
     reader_count: AtomicUsize,
     writer_lock: AtomicBool,
     data: UnsafeCell<T>,
 }
 
 // SAFETY: RwLock can be shared between threads if T can be sent between threads
-unsafe impl<T: Send> Sync for RwLock<T> {}
-unsafe impl<T: Send> Send for RwLock<T> {}
+unsafe impl<T: Send + ?Sized> Sync for RwLock<T> {}
+unsafe impl<T: Send + ?Sized> Send for RwLock<T> {}
 
-impl<T> RwLock<T> {
-    /// Creates a new `RwLock` wrapping the provided data.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let lock = RwLock::new(0);
-    /// ```
-    pub const fn new(data: T) -> Self {
-        Self {
-            reader_count: AtomicUsize::new(0),
-            writer_lock: AtomicBool::new(false),
-            data: UnsafeCell::new(data),
-        }
-    }
-
+impl<T: ?Sized> RwLock<T> {
     pub fn read(&self) -> RwLockGuard<'_, T> {
         while self.writer_lock.load(Ordering::Acquire) {
             core::hint::spin_loop();
@@ -69,12 +54,12 @@ impl<T> RwLock<T> {
 ///
 /// This guard is returned by `RwLock::read` and `RwLock::write`. It releases the lock or decrements the reader count
 /// automatically when dropped.
-pub struct RwLockGuard<'a, T> {
+pub struct RwLockGuard<'a, T: ?Sized> {
     lock: &'a RwLock<T>,
     writer: bool,
 }
 
-impl<T> core::ops::Deref for RwLockGuard<'_, T> {
+impl<T: ?Sized> core::ops::Deref for RwLockGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -83,14 +68,14 @@ impl<T> core::ops::Deref for RwLockGuard<'_, T> {
     }
 }
 
-impl<T> core::ops::DerefMut for RwLockGuard<'_, T> {
+impl<T: ?Sized> core::ops::DerefMut for RwLockGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: The lock is held, so we have exclusive access
         unsafe { &mut *self.lock.data.get() }
     }
 }
 
-impl<T> Drop for RwLockGuard<'_, T> {
+impl<T: ?Sized> Drop for RwLockGuard<'_, T> {
     /// Releases the lock when the guard goes out of scope.
     fn drop(&mut self) {
         if self.writer {

@@ -7,7 +7,7 @@ edition = "2024"
 drivers = { path = "../drivers" }
 common = { path = "../common" }
 cfg-if = "1.0"
-
+bitflags = { version = "2.11", default-features = false }
 [[bin]]
 name = "kernel"
 path = "src/main.rs"

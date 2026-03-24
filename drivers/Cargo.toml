@@ -11,3 +11,4 @@ common = { path = "../common" }
 default = ["bcm2835"]
 bcm2835 = []
 bcm2711 = []
+pc = []

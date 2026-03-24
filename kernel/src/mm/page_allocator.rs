@@ -2,11 +2,12 @@ use crate::mm::buddy_allocator::BuddyAllocator;
 use crate::mm::page_table::Page;
 use crate::mm::page_table::{L1Table, L2Table, PageBlock};
 use common::sync::SpinLock;
+use core::cell::OnceCell;
 
 pub const PAGE_SIZE: usize = 4096;
 
 /// Global page allocator using buddy allocation
-pub static PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
+static PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
 
 /// High-level interface for allocating pages, page blocks, and page tables.
 ///
@@ -14,14 +15,14 @@ pub static PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
 /// Provides RAII-style wrappers for allocated memory to ensure proper
 /// deallocation when values go out of scope.
 pub struct PageAllocator {
-    inner: SpinLock<Option<BuddyAllocator>>,
+    inner: OnceCell<SpinLock<BuddyAllocator>>,
 }
 
 impl PageAllocator {
     /// Create a new uninitialized page allocator
     const fn new() -> Self {
         Self {
-            inner: SpinLock::new(None),
+            inner: OnceCell::new(),
         }
     }
 
@@ -38,19 +39,16 @@ impl PageAllocator {
     /// # Panics
     /// Panics if called more than once.
     pub unsafe fn init(&self, start: usize, end: usize) {
-        // Retrieve lock and ensure uninitialized
-        let mut allocator = self.inner.lock();
-
-        if allocator.is_some() {
-            panic!("PageAllocator already initialized");
-        }
-
         // Initialize buddy allocator
         let mut buddy = BuddyAllocator::new(PAGE_SIZE);
         unsafe {
             buddy.init(start, end);
         }
-        *allocator = Some(buddy);
+
+        // Try to set the OnceCell
+        if self.inner.set(SpinLock::new(buddy)).is_err() {
+            panic!("PageAllocator already initialized");
+        }
     }
 
     /// Execute a closure with exclusive access to the underlying BuddyAllocator
@@ -61,9 +59,9 @@ impl PageAllocator {
     where
         F: FnOnce(&mut BuddyAllocator) -> R,
     {
-        let mut guard = self.inner.lock();
-        let allocator = guard.as_mut().expect("PageAllocator not initialized");
-        f(allocator)
+        let allocator = self.inner.get().expect("PageAllocator not initialized");
+        let mut guard = allocator.lock();
+        f(&mut *guard)
     }
 
     /// Allocates a single page.
@@ -95,11 +93,23 @@ impl PageAllocator {
     /// - `order` must match the order used during allocation
     /// - Must not be double-freed
     pub unsafe fn free_block(&self, addr: usize, order: usize) {
-        let mut guard = self.inner.lock();
-        if let Some(allocator) = guard.as_mut() {
+        if let Some(allocator) = self.inner.get() {
+            let mut guard = allocator.lock();
             unsafe {
-                allocator.free_block(addr, order);
+                guard.free_block(addr, order);
             }
         }
     }
+}
+
+// SAFETY: PageAllocator wraps a OnceCell<SpinLock<BuddyAllocator>>.
+// - OnceCell provides thread-safe one-time initialization
+// - SpinLock ensures exclusive access to the BuddyAllocator
+// - BuddyAllocator itself is Send + Sync (manages its own invariants)
+// Thread safety is guaranteed by the SpinLock wrapper.
+unsafe impl Send for PageAllocator {}
+unsafe impl Sync for PageAllocator {}
+
+pub fn page_allocator() -> &'static PageAllocator {
+    &PAGE_ALLOCATOR
 }

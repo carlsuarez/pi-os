@@ -35,11 +35,8 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
-/// Mailbox base address (offset from peripheral base).
-const MAILBOX_OFFSET: usize = 0xB880;
-
 /// Mailbox base address.
-pub const MAILBOX_BASE: usize = super::PERIPHERAL_BASE + MAILBOX_OFFSET;
+pub const MAILBOX_BASE: usize = 0x2000_B880;
 
 // Register offsets
 const REG_READ: usize = 0x00;

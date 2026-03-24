@@ -10,6 +10,7 @@ DEBUG=0
 for arg in "$@"; do
     [[ "$arg" == "--target=uboot" ]] && TARGET="uboot"
     [[ "$arg" == "--target=qemu"  ]] && TARGET="qemu"
+    [[ "$arg" == "--target=x86"  ]] && TARGET="x86"
     [[ "$arg" == "--debug"        ]] && DEBUG=1
 done
 
@@ -59,4 +60,22 @@ case "$TARGET" in
             -drive if=virtio,format=raw,file="$BUILD_DIR/uboot_disk.img" \
             $QEMU_COMMON
         ;;
+
+    x86)
+        KERNEL_ELF="build/kernel-x86.elf"
+        [[ $DEBUG -eq 1 ]] && KERNEL_ELF="$BUILD_DIR/kernel-x86_debug.elf"
+
+
+        if [[ ! -f "$KERNEL_ELF" ]]; then
+            echo "[!] $KERNEL_ELF not found. Run: build.sh --target=x86"
+            exit 1
+        fi
+
+
+        echo "[*] Running on grub image..."
+        qemu-system-i386 \
+            -drive format=raw,file=test-boot.img \
+            -serial stdio \
+            -m 128M \
+            -boot c
 esac

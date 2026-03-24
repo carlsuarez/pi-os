@@ -24,7 +24,8 @@
 //! ```
 
 use crate::hal::serial::{
-    DataBits, NonBlockingSerial, Parity, SerialConfig, SerialError, SerialPort, StopBits,
+    DataBits, DynNonBlockingSerial, DynSerialPort, NonBlockingSerial, Parity, SerialConfig,
+    SerialError, SerialPort, StopBits,
 };
 use core::ptr::{read_volatile, write_volatile};
 
@@ -53,6 +54,50 @@ const CR_RXE: u32 = 1 << 9;
 // Line Control Register (LCRH) bits
 const LCRH_WLEN_8: u32 = 0b11 << 5;
 const LCRH_FEN: u32 = 1 << 4;
+
+// ============================================================================
+// PL011-specific Error Type
+// ============================================================================
+
+/// PL011-specific errors
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum PL011Error {
+    /// Framing error (invalid stop bit).
+    Framing,
+    /// Parity error (parity check failed).
+    Parity,
+    /// Overrun error (data received faster than it could be read).
+    Overrun,
+    /// Break condition detected.
+    Break,
+    /// Operation would block but non-blocking mode was requested.
+    WouldBlock,
+    /// Invalid configuration parameter.
+    InvalidConfig,
+    /// Unsupported baud rate (hardware limitation).
+    UnsupportedBaudRate,
+    /// Hardware timeout.
+    Timeout,
+}
+
+impl From<PL011Error> for SerialError {
+    fn from(error: PL011Error) -> Self {
+        match error {
+            PL011Error::Framing => SerialError::Framing,
+            PL011Error::Parity => SerialError::Parity,
+            PL011Error::Overrun => SerialError::Overrun,
+            PL011Error::Break => SerialError::Break,
+            PL011Error::WouldBlock => SerialError::WouldBlock,
+            PL011Error::InvalidConfig => SerialError::InvalidConfig,
+            PL011Error::UnsupportedBaudRate => SerialError::InvalidConfig,
+            PL011Error::Timeout => SerialError::Other,
+        }
+    }
+}
+
+// ============================================================================
+// PL011 Driver
+// ============================================================================
 
 /// PL011 UART driver.
 pub struct PL011 {
@@ -89,9 +134,9 @@ impl PL011 {
     }
 
     /// Calculate baud rate divisors.
-    fn calculate_divisors(baud_rate: u32) -> Result<(u32, u32), SerialError> {
+    fn calculate_divisors(baud_rate: u32) -> Result<(u32, u32), PL011Error> {
         if baud_rate == 0 {
-            return Err(SerialError::InvalidConfig);
+            return Err(PL011Error::InvalidConfig);
         }
 
         // BAUDDIV = (FUARTCLK / (16 × Baud rate))
@@ -101,7 +146,7 @@ impl PL011 {
         let fractional = (divisor & 0x3F) as u32;
 
         if integer == 0 || integer > 0xFFFF {
-            return Err(SerialError::InvalidConfig);
+            return Err(PL011Error::UnsupportedBaudRate);
         }
 
         Ok((integer, fractional))
@@ -113,18 +158,20 @@ impl PL011 {
 // ============================================================================
 
 impl SerialPort for PL011 {
-    fn configure(&mut self, config: SerialConfig) -> Result<(), SerialError> {
+    type Error = PL011Error;
+
+    fn configure(&mut self, config: SerialConfig) -> Result<(), Self::Error> {
         // Validate configuration
         if !matches!(config.data_bits, DataBits::Eight) {
-            return Err(SerialError::InvalidConfig);
+            return Err(PL011Error::InvalidConfig);
         }
 
         if !matches!(config.parity, Parity::None) {
-            return Err(SerialError::InvalidConfig);
+            return Err(PL011Error::InvalidConfig);
         }
 
         if !matches!(config.stop_bits, StopBits::One) {
-            return Err(SerialError::InvalidConfig);
+            return Err(PL011Error::InvalidConfig);
         }
 
         // Disable UART
@@ -160,7 +207,7 @@ impl SerialPort for PL011 {
         Ok(())
     }
 
-    fn write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
+    fn write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         // Wait for TX FIFO to have space
         while self.read_reg(FR_OFFSET) & FR_TXFF != 0 {
             core::hint::spin_loop();
@@ -170,7 +217,7 @@ impl SerialPort for PL011 {
         Ok(())
     }
 
-    fn read_byte(&mut self) -> Result<u8, SerialError> {
+    fn read_byte(&mut self) -> Result<u8, Self::Error> {
         // Wait for data to be available
         while self.read_reg(FR_OFFSET) & FR_RXFE != 0 {
             core::hint::spin_loop();
@@ -179,7 +226,7 @@ impl SerialPort for PL011 {
         Ok((self.read_reg(0x00) & 0xFF) as u8)
     }
 
-    fn flush(&mut self) -> Result<(), SerialError> {
+    fn flush(&mut self) -> Result<(), Self::Error> {
         self.wait_idle();
         Ok(())
     }
@@ -187,28 +234,80 @@ impl SerialPort for PL011 {
     fn is_busy(&self) -> bool {
         self.read_reg(FR_OFFSET) & FR_BUSY != 0
     }
-
-    fn as_nonblocking(&mut self) -> Option<&mut dyn NonBlockingSerial> {
-        Some(self)
-    }
 }
 
 impl NonBlockingSerial for PL011 {
-    fn try_write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
+    fn try_write_byte(&mut self, byte: u8) -> Result<(), Self::Error> {
         if self.read_reg(FR_OFFSET) & FR_TXFF != 0 {
-            return Err(SerialError::WouldBlock);
+            return Err(PL011Error::WouldBlock);
         }
 
         self.write_reg(0x00, byte as u32);
         Ok(())
     }
 
-    fn try_read_byte(&mut self) -> Result<u8, SerialError> {
+    fn try_read_byte(&mut self) -> Result<u8, Self::Error> {
         if self.read_reg(FR_OFFSET) & FR_RXFE != 0 {
-            return Err(SerialError::WouldBlock);
+            return Err(PL011Error::WouldBlock);
         }
 
         Ok((self.read_reg(0x00) & 0xFF) as u8)
+    }
+}
+
+// ============================================================================
+// Type-Erased Serial Port Implementations (using SerialError)
+// ============================================================================
+
+impl DynSerialPort for PL011 {
+    fn configure(&mut self, config: SerialConfig) -> Result<(), SerialError> {
+        SerialPort::configure(self, config).map_err(Into::into)
+    }
+
+    fn write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
+        SerialPort::write_byte(self, byte).map_err(Into::into)
+    }
+
+    fn write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
+        SerialPort::write(self, bytes).map_err(Into::into)
+    }
+
+    fn read_byte(&mut self) -> Result<u8, SerialError> {
+        SerialPort::read_byte(self).map_err(Into::into)
+    }
+
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
+        SerialPort::read(self, buffer).map_err(Into::into)
+    }
+
+    fn flush(&mut self) -> Result<(), SerialError> {
+        SerialPort::flush(self).map_err(Into::into)
+    }
+
+    fn is_busy(&self) -> bool {
+        SerialPort::is_busy(self)
+    }
+
+    fn as_dyn_nonblocking(&mut self) -> Option<&mut dyn DynNonBlockingSerial> {
+        Some(self)
+    }
+}
+
+impl DynNonBlockingSerial for PL011 {
+    fn try_write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
+        NonBlockingSerial::try_write_byte(self, byte).map_err(Into::into)
+    }
+
+    fn try_write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
+        NonBlockingSerial::try_write(self, bytes).map_err(Into::into)
+    }
+
+    fn try_read_byte(&mut self) -> Result<u8, SerialError> {
+        NonBlockingSerial::try_read_byte(self).map_err(Into::into)
+    }
+
+    fn try_read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
+        NonBlockingSerial::try_read(self, buffer).map_err(Into::into)
     }
 }
 

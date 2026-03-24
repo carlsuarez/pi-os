@@ -1,4 +1,4 @@
-use crate::mm::page_allocator::{PAGE_ALLOCATOR, PAGE_SIZE};
+use crate::mm::page_allocator::{PAGE_SIZE, page_allocator};
 use core::ptr::NonNull;
 
 #[cfg(debug_assertions)]
@@ -72,7 +72,7 @@ impl Drop for Page {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            PAGE_ALLOCATOR.free_block(self.addr(), 0);
+            page_allocator().free_block(self.addr(), 0);
         }
     }
 }
@@ -106,7 +106,7 @@ impl<const ORDER: usize> Drop for PageBlock<ORDER> {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            PAGE_ALLOCATOR.free_block(self.addr(), ORDER);
+            page_allocator().free_block(self.addr(), ORDER);
         }
     }
 }
@@ -152,7 +152,7 @@ impl Drop for L1Table {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            PAGE_ALLOCATOR.free_block(self.base(), 2);
+            page_allocator().free_block(self.base(), 2);
         }
     }
 }
@@ -198,7 +198,7 @@ impl Drop for L2Table {
     fn drop(&mut self) {
         self.flag.mark_freed();
         unsafe {
-            PAGE_ALLOCATOR.free_block(self.base(), 0);
+            page_allocator().free_block(self.base(), 0);
         }
     }
 }

@@ -1,6 +1,8 @@
 //! BCM2835 Interrupt Controller Driver
 
-use crate::hal::interrupt::{InterruptController, IrqNumber};
+use crate::hal::interrupt::{
+    DynInterruptController, InterruptController, InterruptError, IrqNumber,
+};
 use core::ptr::{read_volatile, write_volatile};
 
 /// Interrupt controller base address.
@@ -112,12 +114,36 @@ pub fn disable_irq(irq: u32) {
 }
 
 // ============================================================================
+// Error Type
+// ============================================================================
+
+/// BCM2835 interrupt controller errors
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Bcm2835IntcError {
+    /// Invalid IRQ number (must be 0-79)
+    InvalidIrq,
+    /// Hardware error
+    Hardware,
+}
+
+impl From<Bcm2835IntcError> for InterruptError {
+    fn from(err: Bcm2835IntcError) -> Self {
+        match err {
+            Bcm2835IntcError::InvalidIrq => InterruptError::InvalidIrq,
+            Bcm2835IntcError::Hardware => InterruptError::Hardware,
+        }
+    }
+}
+
+// ============================================================================
 // HAL Implementation
 // ============================================================================
 
 /// BCM2835 interrupt controller.
 #[derive(Debug)]
-pub struct Bcm2835InterruptController;
+pub struct Bcm2835InterruptController {
+    base: usize,
+}
 
 impl Bcm2835InterruptController {
     /// Create a new interrupt controller.
@@ -125,30 +151,43 @@ impl Bcm2835InterruptController {
     /// # Safety
     ///
     /// Interrupt controller registers must be properly mapped.
-    pub const unsafe fn new() -> Self {
-        Self
+    pub const unsafe fn new(base: usize) -> Self {
+        Self { base }
+    }
+
+    /// Validate IRQ number (BCM2835 supports IRQs 0-79)
+    fn validate_irq(irq: IrqNumber) -> Result<(), Bcm2835IntcError> {
+        if irq >= 80 {
+            Err(Bcm2835IntcError::InvalidIrq)
+        } else {
+            Ok(())
+        }
     }
 }
 
-/// Interrupt controller errors (operations are infallible).
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum InterruptError {}
+// ============================================================================
+// Generic HAL Implementation
+// ============================================================================
 
 impl InterruptController for Bcm2835InterruptController {
-    type Error = InterruptError;
+    type Error = Bcm2835IntcError;
 
     fn enable(&mut self, irq: IrqNumber) -> Result<(), Self::Error> {
+        Self::validate_irq(irq)?;
         enable_irq(irq);
         Ok(())
     }
 
     fn disable(&mut self, irq: IrqNumber) -> Result<(), Self::Error> {
+        Self::validate_irq(irq)?;
         disable_irq(irq);
         Ok(())
     }
 
-    fn is_pending(&self, _irq: IrqNumber) -> Result<bool, Self::Error> {
+    fn is_pending(&self, irq: IrqNumber) -> Result<bool, Self::Error> {
+        Self::validate_irq(irq)?;
         // BCM2835 doesn't provide efficient per-IRQ pending check
+        // Would need to read the appropriate pending register and check the bit
         Ok(false)
     }
 
@@ -156,3 +195,34 @@ impl InterruptController for Bcm2835InterruptController {
         pending_irq()
     }
 }
+
+// ============================================================================
+// Type-Erased HAL Implementation
+// ============================================================================
+
+impl DynInterruptController for Bcm2835InterruptController {
+    fn enable(&mut self, irq: IrqNumber) -> Result<(), InterruptError> {
+        InterruptController::enable(self, irq).map_err(InterruptError::from)
+    }
+
+    fn disable(&mut self, irq: IrqNumber) -> Result<(), InterruptError> {
+        InterruptController::disable(self, irq).map_err(InterruptError::from)
+    }
+
+    fn is_pending(&self, irq: IrqNumber) -> Result<bool, InterruptError> {
+        InterruptController::is_pending(self, irq).map_err(InterruptError::from)
+    }
+
+    fn next_pending(&self) -> Option<IrqNumber> {
+        InterruptController::next_pending(self)
+    }
+
+    fn clear(&mut self, irq: IrqNumber) -> Result<(), InterruptError> {
+        InterruptController::clear(self, irq).map_err(InterruptError::from)
+    }
+}
+
+// SAFETY: BCM2835 interrupt controller wraps memory-mapped hardware that can be safely
+// accessed from any thread when protected by synchronization.
+unsafe impl Send for Bcm2835InterruptController {}
+unsafe impl Sync for Bcm2835InterruptController {}

@@ -1,97 +1,68 @@
-use crate::mm::page_table::{L1Table, L2Table};
-use common::sync::SpinLock;
-use core::ptr::{self, write_volatile};
+use crate::mm::mmu::{MapFlags, MmuOps};
+use core::ptr::write_volatile;
 use drivers::platform::{CurrentPlatform, Platform};
 
-/// Error types for MMU operations
-#[derive(Debug, Clone, Copy)]
-pub enum MmuError {
-    InvalidL1Entry,
-    InvalidPageIndex,
-}
+// ============================================================================
+// Constants
+// ============================================================================
 
-/// Constants
 pub const NUM_L1_ENTRIES: usize = 4096;
 pub const SECTION_SIZE: usize = 0x100000;
 pub const SECTION_MASK: usize = 0xFFF00000;
 pub const PAGE_MASK: usize = 0xFFFFF000;
-pub const PAGE_OFFSET_MASK: usize = 0xFFF;
 
-pub const L2_TYPE_SMALL: u32 = 2;
-
-// ARMv6 Access Permissions (AP[2:0])
-// AP[2] is in bit 15 (APX), AP[1:0] in bits [11:10]
-pub const AP_NO_ACCESS: u32 = 0b000; // No access
-pub const AP_PRIV_RW: u32 = 0b001; // Privileged RW, User no access
-pub const AP_PRIV_RW_USER_RO: u32 = 0b010; // Privileged RW, User RO
-pub const AP_FULL: u32 = 0b011; // Full access (RW for all)
-pub const AP_PRIV_RO: u32 = 0b101; // Privileged RO, User no access
-pub const AP_ALL_RO: u32 = 0b111; // Read-only for all
+// Access permission encodings (AP[2:0])
+pub const AP_NO_ACCESS: u32 = 0b000;
+pub const AP_PRIV_RW: u32 = 0b001;
+pub const AP_PRIV_RW_USER_RO: u32 = 0b010;
+pub const AP_FULL: u32 = 0b011;
+pub const AP_PRIV_RO: u32 = 0b101;
+pub const AP_ALL_RO: u32 = 0b111;
 
 pub const DOMAIN_KERNEL: u32 = 0;
 pub const DOMAIN_USER: u32 = 1;
 pub const DOMAIN_HW: u32 = 2;
 
-// Memory type constants (TEX, C, B)
+// Memory type encodings (TEX, C, B)
 pub const MEM_STRONGLY_ORDERED: u32 = (0b000 << 12) | (0 << 3) | (0 << 2);
 pub const MEM_DEVICE: u32 = (0b000 << 12) | (0 << 3) | (1 << 2);
 pub const MEM_NORMAL_UNCACHED: u32 = (0b001 << 12) | (0 << 3) | (0 << 2);
 pub const MEM_NORMAL_WRITEBACK: u32 = (0b001 << 12) | (1 << 3) | (1 << 2);
 
-// Assembly-declared static for kernel L1 page table
 unsafe extern "C" {
-    static mut l1_page_table: [u32; 4096];
     static _vectors: u8;
 }
 
-static KERNEL_L1_LOCK: SpinLock<()> = SpinLock::new(());
+// ============================================================================
+// Entry constructors
+// ============================================================================
 
 #[inline(always)]
-fn section_entry_normal(phys_addr: usize, ap: u32, domain: u32) -> u32 {
-    let base = (phys_addr & SECTION_MASK) as u32;
-    let ap_bits = ((ap & 0x4) << 13) | ((ap & 0x3) << 10); // APX @15, AP[1:0] @11:10
-
-    base
-        | MEM_NORMAL_WRITEBACK
-        | ap_bits
-        | (domain << 5)
-        | (0 << 4)        // XN=0 (executable)
-        | 0b10 // Section
+fn ap_bits(ap: u32) -> u32 {
+    ((ap & 0x4) << 13) | ((ap & 0x3) << 10)
 }
 
 #[inline(always)]
-fn section_entry_device(phys_addr: usize, ap: u32, domain: u32) -> u32 {
-    let base = (phys_addr & SECTION_MASK) as u32;
-    let ap_bits = ((ap & 0x4) << 13) | ((ap & 0x3) << 10);
-
-    base
-        | MEM_DEVICE
-        | ap_bits
-        | (domain << 5)
-        | (1 << 4)        // XN=1
-        | 0b10
+fn section_entry(phys_addr: usize, mem_type: u32, ap: u32, domain: u32, exec: bool) -> u32 {
+    let xn = if exec { 0 } else { 1 << 4 };
+    ((phys_addr & SECTION_MASK) as u32) | mem_type | ap_bits(ap) | (domain << 5) | xn | 0b10
 }
 
-/// Compute coarse page table descriptor (points to L2 table)
 #[inline(always)]
 pub fn coarse_entry(l2_phys: usize, domain: u32) -> u32 {
-    let base = (l2_phys & 0xFFFFFC00) as u32; // L2 table must be 1KB aligned
-    base | (domain << 5) | 0b01 // Coarse page table descriptor
+    ((l2_phys & 0xFFFFFC00) as u32) | (domain << 5) | 0b01
 }
 
-/// Compute L2 small page descriptor (4KB pages)
 #[inline(always)]
 pub fn l2_page_entry(phys_addr: usize, ap: u32) -> u32 {
     let base = (phys_addr & PAGE_MASK) as u32;
-    let ap_bits = ((ap & 0x4) << 7) | ((ap & 0x3) << 4);
-
-    base
-        | ap_bits
-        | (1 << 3)              // C=1
-        | (1 << 2)              // B=1 (write-back)
-        | (0 << 6)              // TEX=0
-        | 0b10 // Small page (4KB)
+    let ap_l2 = ((ap & 0x4) << 7) | ((ap & 0x3) << 4);
+    base | ap_l2 | (1 << 3) | (1 << 2) | 0b10
 }
+
+// ============================================================================
+// Index helpers
+// ============================================================================
 
 #[inline(always)]
 pub fn l1_index(va: usize) -> usize {
@@ -109,145 +80,196 @@ pub fn coarse_base(l1_entry: u32) -> usize {
 }
 
 #[inline(always)]
-pub fn is_valid_l1_section_entry(entry: u32) -> bool {
+pub fn is_section_entry(entry: u32) -> bool {
     entry & 0x3 == 0x2
 }
 
 #[inline(always)]
-pub fn is_valid_l1_coarse_entry(entry: u32) -> bool {
+pub fn is_coarse_entry(entry: u32) -> bool {
     entry & 0x3 == 0x1
 }
 
-/// Get an L1 table reference to the kernel's page table
-///# Safety
-/// Caller must ensure exclusive access if modifying entries.
-pub unsafe fn get_kernel_l1_table() -> L1Table {
-    L1Table::new(core::ptr::addr_of_mut!(l1_page_table) as usize)
-}
+// ============================================================================
+// ArmMmu
+// ============================================================================
 
-/// Execute a closure with exclusive access to the kernel L1 page table
-///
-/// # Safety
-/// Caller must ensure no deadlocks occur if called from interrupt context
-/// or nested calls.
-pub fn with_kernel_l1<F, R>(f: F) -> R
-where
-    F: FnOnce(&mut L1Table) -> R,
-{
-    let _guard = KERNEL_L1_LOCK.lock();
-    unsafe { f(&mut get_kernel_l1_table()) }
-}
+pub struct ArmMmu;
 
-/// Set a single L1 entry in the kernel page table
-///
-/// # Safety
-/// Caller must ensure:
-/// - The entry is valid for the virtual address
-/// - TLB is invalidated if MMU is already enabled
-/// - No concurrent access to the same entry
-pub unsafe fn set_kernel_l1_entry(va: usize, entry: u32) {
-    unsafe {
-        let l1: *mut u32 = &raw mut l1_page_table[l1_index(va)];
-        write_volatile(l1, entry);
-    }
-}
-
-/// Initialize the kernel's L1 page table (called from assembly before MMU is enabled)
-///
-/// This sets up the initial identity mapping for:
-/// - 256MB of RAM starting at 0x0 (kernel code, data, stacks, heap)
-/// - 16MB of peripheral space starting at PERIPHERAL_BASE (MMIO)
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn init_kernel_page_table() {
-    unsafe {
-        let l1: *mut u32 = &mut l1_page_table[0];
-
-        // Clear L1
-        for i in 0..NUM_L1_ENTRIES {
-            write_volatile(l1.add(i), 0);
-        }
-
+impl MmuOps for ArmMmu {
+    /// Populate the L1 page table at l1_phys and enable the MMU.
+    /// l1_phys must point to a zeroed, 16KB-aligned physical region.
+    unsafe fn init(l1_phys: usize) {
+        let l1 = l1_phys as *mut u32;
         let mm = CurrentPlatform::memory_map();
 
-        // Map RAM as Normal WBWA
+        // Map RAM as Normal Write-Back
         let ram_start = mm.ram_start & SECTION_MASK;
         let ram_end = (mm.ram_start + mm.ram_size + SECTION_SIZE - 1) & SECTION_MASK;
-
         let mut addr = ram_start;
         while addr < ram_end {
             write_volatile(
                 l1.add(l1_index(addr)),
-                section_entry_normal(addr, AP_PRIV_RW, DOMAIN_KERNEL),
+                section_entry(addr, MEM_NORMAL_WRITEBACK, AP_PRIV_RW, DOMAIN_KERNEL, true),
             );
             addr += SECTION_SIZE;
         }
 
-        // Ensure vectors' section is mapped executable
-        let v = (&_vectors as *const _ as usize) & SECTION_MASK;
+        // Ensure the vectors section is mapped executable
+        let v = (core::ptr::addr_of!(_vectors) as usize) & SECTION_MASK;
         write_volatile(
             l1.add(l1_index(v)),
-            section_entry_normal(v, AP_PRIV_RW, DOMAIN_KERNEL),
+            section_entry(v, MEM_NORMAL_WRITEBACK, AP_PRIV_RW, DOMAIN_KERNEL, true),
         );
 
-        // Map peripherals as Device
+        // Map peripherals as Device (non-cacheable, execute-never)
         let periph_start = mm.peripheral_base & SECTION_MASK;
         let periph_end =
             (mm.peripheral_base + mm.peripheral_size + SECTION_SIZE - 1) & SECTION_MASK;
-
         addr = periph_start;
         while addr < periph_end {
             write_volatile(
                 l1.add(l1_index(addr)),
-                section_entry_device(addr, AP_PRIV_RW, DOMAIN_HW),
+                section_entry(addr, MEM_DEVICE, AP_PRIV_RW, DOMAIN_HW, false),
             );
             addr += SECTION_SIZE;
         }
+
+        enable_mmu(l1_phys);
+    }
+
+    unsafe fn map_region(virt: usize, phys: usize, size: usize, flags: MapFlags) {
+        // Determine AP and memory type from flags
+        let ap = if flags.contains(MapFlags::USER) {
+            if flags.contains(MapFlags::WRITE) {
+                AP_FULL
+            } else {
+                AP_PRIV_RW_USER_RO
+            }
+        } else {
+            if flags.contains(MapFlags::WRITE) {
+                AP_PRIV_RW
+            } else {
+                AP_PRIV_RO
+            }
+        };
+
+        let mem_type = if flags.contains(MapFlags::DEVICE) {
+            MEM_DEVICE
+        } else if flags.contains(MapFlags::CACHED) {
+            MEM_NORMAL_WRITEBACK
+        } else {
+            MEM_NORMAL_UNCACHED
+        };
+
+        let exec = flags.contains(MapFlags::EXEC);
+        let domain = if flags.contains(MapFlags::USER) {
+            DOMAIN_USER
+        } else {
+            DOMAIN_KERNEL
+        };
+
+        // Use the kernel L1 table published by init.rs
+        let l1 = crate::kcore::init::KERNEL_L1_TABLE_PHYS
+            .load(core::sync::atomic::Ordering::Relaxed) as *mut u32;
+
+        let aligned_size = (size + SECTION_SIZE - 1) & SECTION_MASK;
+        let mut offset = 0;
+        while offset < aligned_size {
+            write_volatile(
+                l1.add(l1_index(virt + offset)),
+                section_entry(phys + offset, mem_type, ap, domain, exec),
+            );
+            offset += SECTION_SIZE;
+        }
+
+        Self::invalidate_tlb_all();
+    }
+
+    unsafe fn unmap_region(virt: usize, size: usize) {
+        let l1 = crate::kcore::init::KERNEL_L1_TABLE_PHYS
+            .load(core::sync::atomic::Ordering::Relaxed) as *mut u32;
+
+        let aligned_size = (size + SECTION_SIZE - 1) & SECTION_MASK;
+        let mut offset = 0;
+        while offset < aligned_size {
+            write_volatile(l1.add(l1_index(virt + offset)), 0);
+            Self::invalidate_tlb_entry(virt + offset);
+            offset += SECTION_SIZE;
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn invalidate_tlb_entry(va: usize) {
+        core::arch::asm!(
+            "mcr p15, 0, {va}, c8, c7, 1",
+            va = in(reg) va,
+            options(nostack),
+        );
+    }
+
+    #[inline(always)]
+    unsafe fn invalidate_tlb_all() {
+        core::arch::asm!(
+            "mov {t}, #0",
+            "mcr p15, 0, {t}, c8, c7, 0",
+            t = out(reg) _,
+            options(nostack),
+        );
     }
 }
 
-/// Map a single page in an L2 table
+// ============================================================================
+// MMU enable (private, ARM-only)
+// ============================================================================
+
+/// Load TTBR0, configure TTBCR/DACR, then enable MMU + caches.
 ///
 /// # Safety
-/// The L2 table must be properly initialized and aligned.
-pub fn map_page(l2_table: &mut L2Table, va: usize, phys_addr: usize, ap: u32) {
-    unsafe {
-        let l2_ptr = l2_table.base() as *mut u32;
-        write_volatile(l2_ptr.add(l2_index(va)), l2_page_entry(phys_addr, ap));
-    }
-}
+/// - ttbr0 must be the physical address of a valid fully-populated
+///   16KB-aligned L1 page table.
+/// - The caller's code must be identity-mapped in that table.
+/// - Called exactly once before the MMU is enabled.
+unsafe fn enable_mmu(ttbr0: usize) {
+    core::arch::asm!(
+        // Invalidate TLB before loading new TTBR0
+        "mov     {t}, #0",
+        "mcr     p15, 0, {t}, c8, c7, 0",      // TLBIALL
 
-/// Install an L2 table into an L1 entry
-pub fn install_l2_table(l1_table: &mut L1Table, va: usize, l2_table: &L2Table, domain: u32) {
-    let entry = coarse_entry(l2_table.base(), domain);
-    l1_table.set_entry(l1_index(va), entry);
-    invalidate_tlb_entry(va);
-}
+        // TTBR0: base | IRGN=WBWA (bit 6) | RGN=WBWA (bit 0)
+        "orr     {b}, {b}, #(1 << 6)",
+        "orr     {b}, {b}, #(1 << 0)",
+        "mcr     p15, 0, {b}, c2, c0, 0",      // TTBR0
 
-/// Set a single L1 entry
-pub fn set_l1_entry(l1_table: &mut L1Table, va: usize, entry: u32) {
-    l1_table.set_entry(l1_index(va), entry);
-}
+        // TTBCR = 0: use TTBR0 for all translations, N=0
+        "mov     {t}, #0",
+        "mcr     p15, 0, {t}, c2, c0, 2",      // TTBCR
 
-/// Invalidate a single TLB entry by virtual address
-#[inline(always)]
-pub fn invalidate_tlb_entry(va: usize) {
-    unsafe {
-        core::arch::asm!(
-            "mcr p15, 0, {}, c8, c7, 1",  // TLBIMVA - invalidate by MVA
-            in(reg) va,
-            options(nostack)
-        );
-    }
-}
+        // DACR: domain 0 = client, all others = no-access
+        "mov     {t}, #0x1",
+        "mcr     p15, 0, {t}, c3, c0, 0",      // DACR
 
-/// Invalidate entire TLB
-#[inline(always)]
-pub fn invalidate_tlb_all() {
-    unsafe {
-        core::arch::asm!(
-            "mov r0, #0",
-            "mcr p15, 0, r0, c8, c7, 0", // TLBIALL - invalidate all
-            options(nostack)
-        );
-    }
+        // Clear AFE (bit 29) in SCTLR so AP[2:0] encoding is used
+        "mrc     p15, 0, {t}, c1, c0, 0",
+        "bic     {t}, {t}, #(1 << 29)",
+        "mcr     p15, 0, {t}, c1, c0, 0",
+
+        // DSB: ensure all table writes are visible to the page table walker
+        "mov     {t}, #0",
+        "mcr     p15, 0, {t}, c7, c10, 4",     // DSB
+
+        // Enable MMU (bit 0) + D-cache (bit 2) + I-cache (bit 12)
+        "mrc     p15, 0, {t}, c1, c0, 0",
+        "orr     {t}, {t}, #(1 << 0)",
+        "orr     {t}, {t}, #(1 << 2)",
+        "orr     {t}, {t}, #(1 << 12)",
+        "mcr     p15, 0, {t}, c1, c0, 0",
+
+        // ISB: flush pipeline after SCTLR write
+        "mov     {t}, #0",
+        "mcr     p15, 0, {t}, c7, c5, 4",      // ISB
+
+        b = in(reg) ttbr0,
+        t = out(reg) _,
+        options(nostack),
+    );
 }

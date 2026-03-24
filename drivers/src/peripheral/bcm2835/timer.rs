@@ -3,7 +3,7 @@
 //! The BCM2835 has a 64-bit free-running counter at 1MHz and
 //! four compare channels that can generate interrupts.
 
-use crate::hal::timer::{CountingTimer, Timer};
+use crate::hal::timer::{CountingTimer, DynCountingTimer, DynTimer, Timer, TimerError};
 use core::ptr::{read_volatile, write_volatile};
 
 /// System timer base address.
@@ -33,7 +33,47 @@ impl Channel {
     fn bitmask(self) -> u32 {
         1 << (self as u32)
     }
+
+    /// Convert from usize handle (for DynTimer).
+    fn from_usize(handle: usize) -> Result<Self, Bcm2835TimerError> {
+        match handle {
+            0 => Ok(Channel::Channel0),
+            1 => Ok(Channel::Channel1),
+            2 => Ok(Channel::Channel2),
+            3 => Ok(Channel::Channel3),
+            _ => Err(Bcm2835TimerError::InvalidChannel),
+        }
+    }
 }
+
+// ============================================================================
+// Error Type
+// ============================================================================
+
+/// BCM2835 timer errors.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Bcm2835TimerError {
+    /// Invalid channel number (must be 0-3).
+    InvalidChannel,
+    /// Timer interval is too large (hardware limitation).
+    IntervalTooLarge,
+    /// Counter overflow detected.
+    CounterOverflow,
+}
+
+impl From<Bcm2835TimerError> for TimerError {
+    fn from(error: Bcm2835TimerError) -> Self {
+        match error {
+            Bcm2835TimerError::InvalidChannel => TimerError::InvalidHandle,
+            Bcm2835TimerError::IntervalTooLarge => TimerError::IntervalOutOfRange,
+            Bcm2835TimerError::CounterOverflow => TimerError::Hardware,
+        }
+    }
+}
+
+// ============================================================================
+// Register Definitions
+// ============================================================================
 
 /// Memory-mapped system timer registers.
 #[repr(C)]
@@ -126,18 +166,17 @@ impl Bcm2835Timer {
     /// # Safety
     ///
     /// Timer registers must be properly mapped.
-    pub const unsafe fn new() -> Self {
+    pub const unsafe fn new(base: usize) -> Self {
+        if base != TIMER_BASE {
+            panic!("Invalid base address for BCM2835 timer");
+        }
         Self
     }
 }
 
-/// Timer errors (BCM2835 timer operations are infallible).
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum TimerError {}
-
 impl Timer for Bcm2835Timer {
     type Handle = Channel;
-    type Error = TimerError;
+    type Error = Bcm2835TimerError;
 
     fn start(&mut self, handle: Self::Handle, interval_us: u32) -> Result<(), Self::Error> {
         start_timer(handle, interval_us);
@@ -164,3 +203,39 @@ impl CountingTimer for Bcm2835Timer {
         read_counter()
     }
 }
+
+// ============================================================================
+// Type-Erased Timer Implementations
+// ============================================================================
+
+impl DynTimer for Bcm2835Timer {
+    fn start(&mut self, handle: usize, interval_us: u32) -> Result<(), TimerError> {
+        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        Timer::start(self, channel, interval_us).map_err(TimerError::from)
+    }
+
+    fn stop(&mut self, handle: usize) -> Result<(), TimerError> {
+        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        Timer::stop(self, channel).map_err(TimerError::from)
+    }
+
+    fn clear_interrupt(&mut self, handle: usize) -> Result<(), TimerError> {
+        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        Timer::clear_interrupt(self, channel).map_err(TimerError::from)
+    }
+
+    fn is_pending(&self, handle: usize) -> Result<bool, TimerError> {
+        let channel = Channel::from_usize(handle).map_err(TimerError::from)?;
+        Timer::is_pending(self, channel).map_err(TimerError::from)
+    }
+}
+impl DynCountingTimer for Bcm2835Timer {
+    fn now_us(&self) -> u64 {
+        CountingTimer::now_us(self)
+    }
+}
+
+// SAFETY: BCM2835Timer wraps memory-mapped hardware that can be safely
+// accessed from any thread when protected by synchronization.
+unsafe impl Send for Bcm2835Timer {}
+unsafe impl Sync for Bcm2835Timer {}

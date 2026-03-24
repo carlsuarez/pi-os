@@ -87,17 +87,17 @@ impl core::fmt::Display for FileType {
     }
 }
 
-/// Open flags for files
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OpenFlags(u32);
-
-impl OpenFlags {
-    pub const RDONLY: Self = Self(0);
-    pub const WRONLY: Self = Self(1);
-    pub const RDWR: Self = Self(2);
-    pub const CREATE: Self = Self(1 << 6);
-    pub const TRUNC: Self = Self(1 << 9);
-    pub const APPEND: Self = Self(1 << 10);
+bitflags::bitflags! {
+    /// Open flags for files
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct OpenFlags: u32 {
+        const RDONLY = 0;
+        const WRONLY = 1 << 0;
+        const RDWR = 1 << 1;
+        const CREATE = 1 << 6;
+        const TRUNC = 1 << 9;
+        const APPEND = 1 << 10;
+    }
 }
 
 /// Seek whence

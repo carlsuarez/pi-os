@@ -7,7 +7,11 @@ use alloc::string::String;
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "arm")] {
         use crate::arch::arm::context::Context;
-    } else {
+    }
+    else if #[cfg(target_arch = "x86")] {
+        use crate::arch::x86::context::Context;
+    }
+    else {
         compile_error!("Unsupported architecture for Process Control Block");
     }
 }

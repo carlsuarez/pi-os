@@ -12,18 +12,21 @@ mod irq;
 mod kcore;
 mod mm;
 mod process;
+mod subsystems;
 mod syscall;
 
+use crate::arch::PlatformIrq;
 use crate::fs::FileSystem;
 use crate::fs::fat::fat32::*;
 use crate::fs::fd::{AccessMode, FdFlags, FileDescriptorTable};
+use crate::subsystems::print_devices;
 use crate::{fs::vfs::vfs, irq::handlers};
 use alloc::sync::Arc;
+use common::sync::irq::IrqControl;
 use core::panic::PanicInfo;
-use drivers::device_manager::devices;
 use drivers::hal::block_device::BlockDevice;
-use drivers::kprintln;
-use drivers::platform::{CurrentPlatform as Platform, Platform as PlatformTrait};
+use drivers::platform::Platform;
+use subsystems::device_manager;
 
 // ============================================================================
 // Kernel Entry Point
@@ -35,67 +38,8 @@ pub extern "C" fn kernel_main() -> ! {
     kprintln!("Booting {} kernel", Platform::name());
     kprintln!("========================================");
 
-    // ------------------------------------------------------------------------
-    // Fetch block device from DeviceManager
-    // ------------------------------------------------------------------------
-    let dev: Arc<dyn BlockDevice> = {
-        let mgr = devices().lock();
-        mgr.block("emmc0").expect("EMMC not registered")
-    };
+    print_devices();
 
-    // ------------------------------------------------------------------------
-    // Mount filesystem
-    // ------------------------------------------------------------------------
-    vfs().init(Fat32Fs::mount(dev).expect("Failed to mount FAT32"));
-    kprintln!("VFS initialized");
-
-    // ------------------------------------------------------------------------
-    // Interrupts
-    // ------------------------------------------------------------------------
-    let timer_irq = Platform::timer_irq();
-    handlers::register(timer_irq, handlers::timer);
-    Platform::enable_irq(timer_irq);
-    crate::arch::arm::interrupt::enable();
-
-    kprintln!("Timer IRQ {} enabled", timer_irq);
-
-    // ------------------------------------------------------------------------
-    // Directory test
-    // ------------------------------------------------------------------------
-    let dir = vfs().ls("/").expect("Failed to read root directory");
-    kprintln!("Root directory:");
-    for entry in dir {
-        kprintln!(" - {}", entry);
-    }
-
-    // ------------------------------------------------------------------------
-    // FD table test
-    // ------------------------------------------------------------------------
-    kprintln!("\n--- Testing FileDescriptorTable ---");
-
-    let mut fd_table = FileDescriptorTable::new();
-    let file = vfs().open("/test.txt").expect("Failed to open /test.txt");
-
-    let access = AccessMode {
-        read: true,
-        write: false,
-        append: false,
-    };
-    let fd = fd_table.alloc(file, FdFlags::NONE, access).unwrap();
-
-    let mut buf = [0u8; 64];
-    let n = fd_table.get_mut(fd).unwrap().read(&mut buf).unwrap();
-
-    if let Ok(s) = core::str::from_utf8(&buf[..n]) {
-        kprintln!("Read from /test.txt: {}", s);
-    }
-
-    fd_table.close(fd).unwrap();
-
-    // ------------------------------------------------------------------------
-    // Start timer
-    // ------------------------------------------------------------------------
-    Platform::timer_start(1_000_000);
     kprintln!("System timer started");
 
     // ------------------------------------------------------------------------
@@ -132,6 +76,6 @@ fn panic(info: &PanicInfo) -> ! {
     kprintln!("System halted.");
 
     loop {
-        crate::arch::arm::wfi();
+        PlatformIrq::wait_for_interrupt();
     }
 }
