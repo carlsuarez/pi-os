@@ -35,7 +35,7 @@ impl File for UartFile {
             .serial(&self.device_name().as_str())
             .ok_or(FdError::IoError)?;
 
-        if let Some(nb) = serial.lock().as_dyn_nonblocking() {
+        if let Some(nb) = serial.lock().as_nonblocking() {
             return nb.try_read(buf).map_err(|_| FdError::IoError);
         } else {
             return serial.lock().read(buf).map_err(|_| FdError::IoError);

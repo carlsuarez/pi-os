@@ -34,21 +34,9 @@ use subsystems::device_manager;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    kprintln!("========================================");
     kprintln!("Booting {} kernel", Platform::name());
-    kprintln!("========================================");
 
     print_devices();
-
-    kprintln!("System timer started");
-
-    // ------------------------------------------------------------------------
-    // Ready
-    // ------------------------------------------------------------------------
-    kprintln!("========================================");
-    kprintln!("Kernel initialization complete");
-    kprintln!("Entering main loop");
-    kprintln!("========================================");
 
     kernel_main_loop();
 }
@@ -67,15 +55,31 @@ fn kernel_main_loop() -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    kprintln!();
-    kprintln!("========================================");
-    kprintln!("KERNEL PANIC!");
-    kprintln!("========================================");
-    kprintln!("{}", info);
-    kprintln!("========================================");
-    kprintln!("System halted.");
+    // Direct VGA write — works before any subsystem is initialized
+    #[cfg(target_arch = "x86")]
+    {
+        use core::fmt::Write;
+
+        struct VgaPanic {
+            col: usize,
+        }
+        impl core::fmt::Write for VgaPanic {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let vga = 0xb8000 as *mut u16;
+                for byte in s.bytes() {
+                    if self.col < 80 * 25 {
+                        unsafe { vga.add(self.col).write_volatile(0x0f00 | byte as u16) };
+                        self.col += 1;
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        let _ = write!(VgaPanic { col: 0 }, "PANIC: {}", info);
+    }
 
     loop {
-        Irq::wait_for_interrupt();
+        core::hint::spin_loop();
     }
 }

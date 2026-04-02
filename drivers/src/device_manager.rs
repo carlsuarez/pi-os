@@ -17,8 +17,8 @@
 //!     port.write_byte(b'H');
 //! }
 //!
-//! // Or get the console (default serial)
-//! if let Some(console) = devices().lock().console() {
+//! // Or get the serial console (default serial)
+//! if let Some(console) = devices().lock().serial_console() {
 //!     console.lock().write_str("Hello, world!\n");
 //! }
 //! ```
@@ -161,7 +161,7 @@ impl DeviceManager {
     /// Get the console (default serial port)
     ///
     /// Tries in order: "console", "serial0", first serial device
-    pub fn console(&self) -> Option<Arc<SpinLock<dyn DynSerialPort>>> {
+    pub fn serial_console(&self) -> Option<Arc<SpinLock<dyn DynSerialPort>>> {
         if let Some(console) = self.serial("console") {
             return Some(console);
         }

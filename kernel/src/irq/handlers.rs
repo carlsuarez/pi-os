@@ -1,7 +1,7 @@
 use drivers::device_manager::DeviceManager;
 
 use crate::arch::TrapFrame;
-use crate::subsystems::{console, system_timer};
+use crate::subsystems::{serial_console, system_timer};
 pub type IrqHandler = fn(&mut TrapFrame);
 
 const MAX_IRQS: usize = 128;
@@ -32,7 +32,7 @@ pub fn timer(_tf: &mut TrapFrame) {
 
     drop(timer); // release before console write to minimize lock hold time
 
-    let _ = console()
+    let _ = serial_console()
         .expect("no console registered")
         .lock()
         .write(b"Timer interrupt\n");

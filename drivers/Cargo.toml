@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 cfg-if = "1.0"
 common = { path = "../common" }
+x86 = "0.52.0"
 
 [features]
 default = ["bcm2835"]

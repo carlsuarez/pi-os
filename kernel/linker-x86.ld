@@ -1,14 +1,14 @@
 ENTRY(_start)
-
 SECTIONS
 {
     . = 1M;
 
     .multiboot ALIGN(4K) : {
-        *(.multiboot)
+        KEEP(*(.multiboot))
     }
 
     .text ALIGN(4K) : {
+        *(.text.boot)
         *(.text*)
     }
 
@@ -21,8 +21,11 @@ SECTIONS
     }
 
     .bss ALIGN(4K) : {
+        _bss_start = .;
         *(COMMON)
         *(.bss*)
+        . = ALIGN(4K);
+        _bss_end = .;
     }
 
     /DISCARD/ : {

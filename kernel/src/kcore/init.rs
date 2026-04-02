@@ -1,17 +1,24 @@
-// kernel/src/kcore/init.rs
-
+use crate::kcore::delay_cycles;
 use crate::mm::mmu::{MmuOps, PlatformMmu};
 use crate::mm::{heap_allocator, page_allocator::page_allocator};
 use crate::subsystems::console_write;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use drivers::hal::console;
 use drivers::platform::{BootInfo, MemoryType, Platform};
 
-/// Physical address of the kernel L1 page table.
+/// Physical address of the kernel L1 page table (ARM only).
 /// Written once by setup_memory_management(), read by ArmMmu::init()
 /// and ArmMmu::map_region() / unmap_region().
 #[cfg(target_arch = "arm")]
 pub static KERNEL_L1_TABLE_PHYS: AtomicUsize = AtomicUsize::new(0);
+
+/// Physical address of the kernel Page Directory (x86 only).
+/// Written once by setup_memory_management(), loaded into CR3 by
+/// X86Mmu::init(), and available to any code that needs the PD base
+/// without going through CR3 directly.
+#[cfg(target_arch = "x86")]
+pub static KERNEL_PD_PHYS: AtomicUsize = AtomicUsize::new(0);
 
 // ============================================================================
 // Kernel Initialization
@@ -21,28 +28,44 @@ pub static KERNEL_L1_TABLE_PHYS: AtomicUsize = AtomicUsize::new(0);
 pub extern "C" fn kernel_init(machine_type: u32, atags_addr: u32) {
     unsafe {
         let boot_info = determine_boot_info(machine_type, atags_addr);
-        crate::subsystems::init(boot_info);
 
-        setup_memory_management();
+        crate::subsystems::init_platform(boot_info);
 
-        // MMU init is driven from Rust — no assembly call needed.
-        // On ARM this reads KERNEL_L1_TABLE_PHYS, maps kernel regions,
-        // and enables the MMU before we proceed to kernel_main.
-        #[cfg(target_arch = "arm")]
-        {
-            let l1_phys = KERNEL_L1_TABLE_PHYS.load(Ordering::Relaxed);
-            PlatformMmu::init(l1_phys);
-        }
+        let layout = setup_memory_management();
 
-        console_write("===========================================\n");
+        crate::subsystems::init_devices();
+
+        // #[cfg(target_arch = "arm")]
+        // {
+        //     let l1_phys = KERNEL_L1_TABLE_PHYS.load(Ordering::Relaxed);
+        //     PlatformMmu::init(l1_phys);
+        // }
+
+        // #[cfg(target_arch = "x86")]
+        // {
+        //     let pd_phys = KERNEL_PD_PHYS.load(Ordering::Relaxed);
+        //     PlatformMmu::init(pd_phys);
+        // }
+
         console_write("Kernel Early Initialization Complete\n");
-        console_write("===========================================\n");
 
+        const THREE_SECONDS_CYCLES: u64 = 3000 * 1_000_000;
+        delay_cycles(THREE_SECONDS_CYCLES);
+        log_memory_layout(
+            layout.kernel_end,
+            layout.heap_start,
+            layout.heap_end,
+            layout.page_alloc_start,
+            layout.page_alloc_end,
+            layout.page_table,
+        );
+        delay_cycles(THREE_SECONDS_CYCLES);
         log_system_info();
+        delay_cycles(THREE_SECONDS_CYCLES);
         log_discovered_hardware();
+        delay_cycles(THREE_SECONDS_CYCLES);
         log_available_devices();
-
-        console_write("===========================================\n");
+        delay_cycles(THREE_SECONDS_CYCLES);
     }
 }
 
@@ -86,11 +109,9 @@ unsafe fn determine_boot_info(machine_type: u32, atags_addr: u32) -> BootInfo {
 // Memory Management Setup
 // ============================================================================
 
-unsafe fn setup_memory_management() {
+unsafe fn setup_memory_management() -> MemoryLayout {
     let mm = Platform::memory_map();
 
-    // _free_memory_start is the linker symbol marking the end of the kernel
-    // image + stacks. Everything below this is already spoken for.
     let kernel_end = unsafe { get_kernel_end_address() };
     let free_mem_start = (kernel_end + 0xFFF) & !0xFFF;
 
@@ -104,15 +125,15 @@ unsafe fn setup_memory_management() {
 
     // Sanity: free memory must not overlap the peripheral window
     if mm.peripheral_size > 0 {
+        let periph_end = mm.peripheral_base + mm.peripheral_size;
         assert!(
-            free_mem_start < mm.peripheral_base
-                || free_mem_start >= mm.peripheral_base + mm.peripheral_size,
+            free_mem_start < mm.peripheral_base || free_mem_start >= periph_end,
             "Kernel end address overlaps the peripheral MMIO region"
         );
     }
 
     // -------------------------------------------------------------------------
-    // ARM: reserve L1 page table (16KB, 16KB-aligned) at the base of free
+    // ARM: reserve L1 page table (16 KB, 16 KB-aligned) at the base of free
     // memory so its physical address is fixed before the MMU is enabled.
     // -------------------------------------------------------------------------
     #[cfg(target_arch = "arm")]
@@ -124,34 +145,63 @@ unsafe fn setup_memory_management() {
         let l1_table_end = l1_table_start + L1_TABLE_SIZE;
 
         if mm.peripheral_size > 0 {
+            let periph_end = mm.peripheral_base + mm.peripheral_size;
             assert!(
-                l1_table_end <= mm.peripheral_base,
+                l1_table_end <= mm.peripheral_base || l1_table_start >= periph_end,
                 "L1 page table allocation would overlap the peripheral MMIO region"
             );
         }
 
-        // Zero before handing to ArmMmu::init
         core::ptr::write_bytes(l1_table_start as *mut u8, 0, L1_TABLE_SIZE);
         KERNEL_L1_TABLE_PHYS.store(l1_table_start, Ordering::Relaxed);
 
         (l1_table_end + 0xFFF) & !0xFFF
     };
 
-    #[cfg(not(target_arch = "arm"))]
+    // -------------------------------------------------------------------------
+    // x86: reserve Page Directory (4 KB, 4 KB-aligned) at the base of free
+    // memory so its physical address is known before CR3 is loaded.
+    // -------------------------------------------------------------------------
+    #[cfg(target_arch = "x86")]
+    let post_table_start = {
+        const PD_SIZE: usize = 4 * 1024;
+        const PD_ALIGN: usize = 4 * 1024;
+
+        let pd_start = (free_mem_start + PD_ALIGN - 1) & !(PD_ALIGN - 1);
+        let pd_end = pd_start + PD_SIZE;
+
+        if mm.peripheral_size > 0 {
+            let periph_end = mm.peripheral_base + mm.peripheral_size;
+            assert!(
+                pd_end <= mm.peripheral_base || pd_start >= periph_end,
+                "x86 page directory allocation would overlap the peripheral MMIO region"
+            );
+        }
+
+        unsafe { core::ptr::write_bytes(pd_start as *mut u8, 0, PD_SIZE) };
+        KERNEL_PD_PHYS.store(pd_start, Ordering::Relaxed);
+
+        (pd_end + 0xFFF) & !0xFFF
+    };
+
+    #[cfg(not(any(target_arch = "arm", target_arch = "x86")))]
     let post_table_start = free_mem_start;
 
     // -------------------------------------------------------------------------
     // Clamp usable RAM end to exclude the peripheral window if it sits
     // inside the RAM region (as it does on all BCM2835/6/7 platforms).
     // -------------------------------------------------------------------------
-    let usable_ram_end = if mm.peripheral_size > 0 && mm.peripheral_base < ram_end {
+    let usable_ram_end = if mm.peripheral_size > 0
+        && mm.peripheral_base >= post_table_start
+        && mm.peripheral_base < ram_end
+    {
         mm.peripheral_base
     } else {
         ram_end
     };
 
     // -------------------------------------------------------------------------
-    // Heap: 10% of remaining RAM, capped at 16MB
+    // Heap: 10% of remaining RAM, capped at 16 MB
     // -------------------------------------------------------------------------
     let available_ram = usable_ram_end.saturating_sub(post_table_start);
     let heap_size = core::cmp::min(16 * 1024 * 1024, available_ram / 10);
@@ -163,9 +213,9 @@ unsafe fn setup_memory_management() {
 
     // Final guard: page allocator range must not touch MMIO
     if mm.peripheral_size > 0 {
+        let periph_end = mm.peripheral_base + mm.peripheral_size;
         assert!(
-            page_alloc_end <= mm.peripheral_base
-                || page_alloc_start >= mm.peripheral_base + mm.peripheral_size,
+            page_alloc_end <= mm.peripheral_base || page_alloc_start >= periph_end,
             "Page allocator range overlaps the peripheral MMIO region"
         );
     }
@@ -175,37 +225,43 @@ unsafe fn setup_memory_management() {
         page_allocator().init(page_alloc_start, page_alloc_end);
     }
 
-    let l1 = {
+    let page_table: Option<(usize, usize)> = {
         #[cfg(target_arch = "arm")]
         {
             let start = KERNEL_L1_TABLE_PHYS.load(Ordering::Relaxed);
             Some((start, start + 16 * 1024))
         }
 
-        #[cfg(not(target_arch = "arm"))]
+        #[cfg(target_arch = "x86")]
+        {
+            let start = KERNEL_PD_PHYS.load(Ordering::Relaxed);
+            Some((start, start + 4 * 1024))
+        }
+
+        #[cfg(not(any(target_arch = "arm", target_arch = "x86")))]
         {
             None
         }
     };
 
-    log_memory_layout(
+    MemoryLayout {
         kernel_end,
         heap_start,
         heap_end,
         page_alloc_start,
         page_alloc_end,
-        l1,
-    );
+        page_table,
+    }
 }
 
 #[cfg(target_arch = "x86")]
 unsafe fn get_kernel_end_address() -> usize {
     unsafe extern "C" {
-        static bss_end: u8;
+        static _bss_end: u8;
     }
-    let bss_end_addr = core::ptr::addr_of!(bss_end) as usize;
-    if bss_end_addr > 0x100000 && bss_end_addr < 0x6400000 {
-        bss_end_addr
+    let bss_end = core::ptr::addr_of!(_bss_end) as usize;
+    if bss_end > 0x100000 && bss_end < 0x6400000 {
+        bss_end
     } else {
         0x100000 + 2 * 1024 * 1024
     }
@@ -228,13 +284,25 @@ unsafe fn get_kernel_end_address() -> usize {
 // Logging
 // ============================================================================
 
+struct MemoryLayout {
+    kernel_end: usize,
+    heap_start: usize,
+    heap_end: usize,
+    page_alloc_start: usize,
+    page_alloc_end: usize,
+    page_table: Option<(usize, usize)>,
+}
+
 fn log_memory_layout(
     kernel_end: usize,
     heap_start: usize,
     heap_end: usize,
     page_start: usize,
     page_end: usize,
-    l1_table: Option<(usize, usize)>,
+    // ARM: Some((l1_start, l1_end))  — 16 KB L1 table
+    // x86: Some((pd_start, pd_end))  —  4 KB page directory
+    // other: None
+    page_table: Option<(usize, usize)>,
 ) {
     use alloc::format;
 
@@ -243,10 +311,11 @@ fn log_memory_layout(
     let msg = format!("  Kernel End:     0x{:08x}\n", kernel_end);
     console_write(&msg);
 
-    if let Some((l1_table_start, l1_table_end)) = l1_table {
+    if let Some((pt_start, pt_end)) = page_table {
+        let size_bytes = pt_end - pt_start;
         let msg = format!(
-            "  L1 Page Table:  0x{:08x} - 0x{:08x} (16 KB)\n",
-            l1_table_start, l1_table_end,
+            "  Page Table:     0x{:08x} - 0x{:08x} ({} B)\n",
+            pt_start, pt_end, size_bytes,
         );
         console_write(&msg);
     }

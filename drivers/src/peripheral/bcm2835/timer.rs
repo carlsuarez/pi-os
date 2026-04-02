@@ -205,37 +205,6 @@ impl CountingTimer for Bcm2835Timer {
     }
 }
 
-// ============================================================================
-// Type-Erased Timer Implementations
-// ============================================================================
-
-impl DynTimer for Bcm2835Timer {
-    fn start(&mut self, handle: usize, interval_us: u32) -> Result<(), TimerError> {
-        let channel = Channel::from(handle);
-        Timer::start(self, channel, interval_us).map_err(TimerError::from)
-    }
-
-    fn stop(&mut self, handle: usize) -> Result<(), TimerError> {
-        let channel = Channel::from(handle);
-        Timer::stop(self, channel).map_err(TimerError::from)
-    }
-
-    fn clear_interrupt(&mut self, handle: usize) -> Result<(), TimerError> {
-        let channel = Channel::from(handle);
-        Timer::clear_interrupt(self, channel).map_err(TimerError::from)
-    }
-
-    fn is_pending(&self, handle: usize) -> Result<bool, TimerError> {
-        let channel = Channel::from(handle);
-        Timer::is_pending(self, channel).map_err(TimerError::from)
-    }
-}
-impl DynCountingTimer for Bcm2835Timer {
-    fn now_us(&self) -> u64 {
-        CountingTimer::now_us(self)
-    }
-}
-
 // SAFETY: BCM2835Timer wraps memory-mapped hardware that can be safely
 // accessed from any thread when protected by synchronization.
 unsafe impl Send for Bcm2835Timer {}

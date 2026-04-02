@@ -196,32 +196,6 @@ impl InterruptController for Bcm2835InterruptController {
     }
 }
 
-// ============================================================================
-// Type-Erased HAL Implementation
-// ============================================================================
-
-impl DynInterruptController for Bcm2835InterruptController {
-    fn enable(&mut self, irq: IrqNumber) -> Result<(), InterruptError> {
-        InterruptController::enable(self, irq).map_err(InterruptError::from)
-    }
-
-    fn disable(&mut self, irq: IrqNumber) -> Result<(), InterruptError> {
-        InterruptController::disable(self, irq).map_err(InterruptError::from)
-    }
-
-    fn is_pending(&self, irq: IrqNumber) -> Result<bool, InterruptError> {
-        InterruptController::is_pending(self, irq).map_err(InterruptError::from)
-    }
-
-    fn next_pending(&self) -> Option<IrqNumber> {
-        InterruptController::next_pending(self)
-    }
-
-    fn clear(&mut self, irq: IrqNumber) -> Result<(), InterruptError> {
-        InterruptController::clear(self, irq).map_err(InterruptError::from)
-    }
-}
-
 // SAFETY: BCM2835 interrupt controller wraps memory-mapped hardware that can be safely
 // accessed from any thread when protected by synchronization.
 unsafe impl Send for Bcm2835InterruptController {}

@@ -10,23 +10,18 @@
 //! Designed for low-level systems (kernels, bootloaders, embedded) with
 //! thread-safe (`Send + Sync`) implementations operating on fixed-size blocks.
 
-/// Block device information
+// Device info
+
 #[derive(Debug, Clone, Copy)]
 pub struct BlockDeviceInfo {
-    /// Block size in bytes (typically 512)
     pub block_size: usize,
-    /// Total number of blocks
     pub block_count: u64,
-    /// Total capacity in bytes
     pub capacity: u64,
-    /// Device is read-only
     pub read_only: bool,
-    /// Device is removable (e.g., SD card)
     pub removable: bool,
 }
 
 impl BlockDeviceInfo {
-    /// Create info for a standard 512-byte block device
     pub fn new(block_count: u64) -> Self {
         Self {
             block_size: 512,
@@ -37,7 +32,6 @@ impl BlockDeviceInfo {
         }
     }
 
-    /// Create info with custom block size
     pub fn with_block_size(block_size: usize, block_count: u64) -> Self {
         Self {
             block_size,
@@ -48,191 +42,86 @@ impl BlockDeviceInfo {
         }
     }
 
-    /// Mark device as read-only
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
         self
     }
-
-    /// Mark device as removable
     pub fn removable(mut self) -> Self {
         self.removable = true;
         self
     }
 }
 
-// ============================================================================
-// Block Device Errors
-// ============================================================================
+// Canonical error type
 
-/// Block device errors (used for type-erased dyn traits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockDeviceError {
-    /// Device not initialized or not present
     NotReady,
-    /// Invalid block address (out of range)
     InvalidAddress,
-    /// Hardware error during read
     ReadError,
-    /// Hardware error during write
     WriteError,
-    /// Device is write-protected
     WriteProtected,
-    /// Buffer size doesn't match block size
     InvalidBuffer,
-    /// Operation timed out
     Timeout,
-    /// CRC or checksum error
     DataError,
-    /// Device was removed
     DeviceRemoved,
-    /// Generic I/O error
     IoError,
-    /// Unsupported device
     UnsupportedDevice,
-    /// Other platform-specific error
     Other,
 }
 
-// ============================================================================
-// Block Device Trait (Generic)
-// ============================================================================
+// BlockDevice: generic concrete trait
+//
+// Drivers implement this once with their own Error type.
+// The only requirement beyond the methods is:
+//   type Error: Into<BlockDeviceError>
+// which lets the blanket impl below convert errors automatically.
 
-/// Block device trait - fundamental storage abstraction
-///
-/// This trait provides block-level access to storage devices.
-/// Implementations must handle block-aligned reads and writes.
-///
-/// # Thread Safety
-///
-/// Implementations must be `Send + Sync` to allow use across threads.
-///
-/// # Example
-///
-/// ```rust
-/// use drivers::hal::block_device::{BlockDevice, BlockDeviceInfo};
-///
-/// fn read_first_block<B: BlockDevice>(device: &B) -> Result<[u8; 512], B::Error> {
-///     let mut buf = [0u8; 512];
-///     device.read_blocks(0, &mut [&mut buf])?;
-///     Ok(buf)
-/// }
-/// ```
 pub trait BlockDevice: Send + Sync {
-    /// Error type for this block device implementation.
-    type Error: core::fmt::Debug;
+    type Error: core::fmt::Debug + Into<BlockDeviceError>;
 
-    /// Get device information
     fn info(&self) -> BlockDeviceInfo;
 
-    /// Read one or more contiguous blocks
-    ///
-    /// # Arguments
-    /// - `start_block`: Starting block address (LBA)
-    /// - `buffers`: Slice of buffers to read into (each must be block_size bytes)
-    ///
-    /// # Returns
-    /// - `Ok(())`: All blocks read successfully
-    /// - `Err(e)`: Error during read
-    ///
-    /// # Errors
-    /// - `InvalidAddress`: Block address out of range
-    /// - `InvalidBuffer`: Buffer size incorrect
-    /// - `ReadError`: Hardware failure
     fn read_blocks(&self, start_block: u64, buffers: &mut [&mut [u8]]) -> Result<(), Self::Error>;
-
-    /// Write one or more contiguous blocks
-    ///
-    /// # Arguments
-    /// - `start_block`: Starting block address (LBA)
-    /// - `buffers`: Slice of buffers to write from (each must be block_size bytes)
-    ///
-    /// # Returns
-    /// - `Ok(())`: All blocks written successfully
-    /// - `Err(e)`: Error during write
-    ///
-    /// # Errors
-    /// - `InvalidAddress`: Block address out of range
-    /// - `InvalidBuffer`: Buffer size incorrect
-    /// - `WriteProtected`: Device is read-only
-    /// - `WriteError`: Hardware failure
     fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), Self::Error>;
 
-    /// Read a single block
-    ///
-    /// Convenience method for reading one block.
-    ///
-    /// # Arguments
-    /// - `block`: Block address (LBA)
-    /// - `buffer`: Buffer to read into (must be block_size bytes)
+    /// Convenience: read a single block.
     fn read_block(&self, block: u64, buffer: &mut [u8]) -> Result<(), Self::Error> {
         self.read_blocks(block, &mut [buffer])
     }
 
-    /// Write a single block
-    ///
-    /// Convenience method for writing one block.
-    ///
-    /// # Arguments
-    /// - `block`: Block address (LBA)
-    /// - `buffer`: Buffer to write from (must be block_size bytes)
+    /// Convenience: write a single block.
     fn write_block(&self, block: u64, buffer: &[u8]) -> Result<(), Self::Error> {
         self.write_blocks(block, &[buffer])
     }
 
-    /// Flush any pending writes
-    ///
-    /// Ensures all writes are committed to persistent storage.
-    /// Default implementation does nothing (assumes immediate persistence).
+    /// Flush pending writes. Default: no-op (assumes immediate persistence).
     fn flush(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    /// Check if device is ready
-    ///
-    /// Returns true if device is initialized and ready for I/O.
+    /// Returns true if the device is initialised and ready for I/O.
     fn is_ready(&self) -> bool {
         true
     }
 }
 
-// ============================================================================
-// Extended Block Device Operations (Generic)
-// ============================================================================
+// BlockDeviceExt: optional advanced operationS
+//
+// Supertrait of BlockDevice, so Into<BlockDeviceError> is already implied.
 
-/// Extended block device operations
-///
-/// Optional trait for devices that support advanced features.
 pub trait BlockDeviceExt: BlockDevice {
-    /// Erase blocks
-    ///
-    /// Some devices (flash) can erase blocks more efficiently than writing zeros.
-    ///
-    /// # Arguments
-    /// - `start_block`: Starting block address
-    /// - `count`: Number of blocks to erase
     fn erase_blocks(&mut self, start_block: u64, count: u64) -> Result<(), Self::Error>;
-
-    /// Trim/discard blocks
-    ///
-    /// Notify device that blocks are no longer in use (SSD TRIM).
-    ///
-    /// # Arguments
-    /// - `start_block`: Starting block address
-    /// - `count`: Number of blocks to trim
     fn trim_blocks(&mut self, start_block: u64, count: u64) -> Result<(), Self::Error>;
-
-    /// Get device status
-    ///
-    /// Returns detailed device status (health, temperature, etc.)
     fn status(&self) -> DeviceStatus;
 }
 
-// ============================================================================
-// Type-Erased Block Device Traits
-// ============================================================================
+// DynBlockDevice: object-safe type-erased trait
+//
+// The device manager stores Box<dyn DynBlockDevice>.
+// Never implement this by hand — the blanket impl below does it automatically
+// for any T: BlockDevice.
 
-/// Type-erased block device trait using `BlockDeviceError`.
 pub trait DynBlockDevice: Send + Sync {
     fn info(&self) -> BlockDeviceInfo;
     fn read_blocks(
@@ -241,39 +130,97 @@ pub trait DynBlockDevice: Send + Sync {
         buffers: &mut [&mut [u8]],
     ) -> Result<(), BlockDeviceError>;
     fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), BlockDeviceError>;
-    fn read_block(&self, block: u64, buffer: &mut [u8]) -> Result<(), BlockDeviceError> {
-        self.read_blocks(block, &mut [buffer])
-    }
-    fn write_block(&self, block: u64, buffer: &[u8]) -> Result<(), BlockDeviceError> {
-        self.write_blocks(block, &[buffer])
-    }
+    fn read_block(&self, block: u64, buffer: &mut [u8]) -> Result<(), BlockDeviceError>;
+    fn write_block(&self, block: u64, buffer: &[u8]) -> Result<(), BlockDeviceError>;
     fn flush(&mut self) -> Result<(), BlockDeviceError>;
     fn is_ready(&self) -> bool;
 }
 
-/// Type-erased extended block device trait using `BlockDeviceError`.
+/// Blanket impl: any BlockDevice (whose Error converts into BlockDeviceError)
+/// automatically becomes a DynBlockDevice.
+impl<T: BlockDevice> DynBlockDevice for T {
+    fn info(&self) -> BlockDeviceInfo {
+        BlockDevice::info(self)
+    }
+    fn read_blocks(
+        &self,
+        start_block: u64,
+        buffers: &mut [&mut [u8]],
+    ) -> Result<(), BlockDeviceError> {
+        BlockDevice::read_blocks(self, start_block, buffers).map_err(Into::into)
+    }
+    fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), BlockDeviceError> {
+        BlockDevice::write_blocks(self, start_block, buffers).map_err(Into::into)
+    }
+    fn read_block(&self, block: u64, buffer: &mut [u8]) -> Result<(), BlockDeviceError> {
+        BlockDevice::read_block(self, block, buffer).map_err(Into::into)
+    }
+    fn write_block(&self, block: u64, buffer: &[u8]) -> Result<(), BlockDeviceError> {
+        BlockDevice::write_block(self, block, buffer).map_err(Into::into)
+    }
+    fn flush(&mut self) -> Result<(), BlockDeviceError> {
+        BlockDevice::flush(self).map_err(Into::into)
+    }
+    fn is_ready(&self) -> bool {
+        BlockDevice::is_ready(self)
+    }
+}
+
+// DynBlockDeviceExT
+
 pub trait DynBlockDeviceExt: DynBlockDevice {
     fn erase_blocks(&mut self, start_block: u64, count: u64) -> Result<(), BlockDeviceError>;
     fn trim_blocks(&mut self, start_block: u64, count: u64) -> Result<(), BlockDeviceError>;
     fn status(&self) -> DeviceStatus;
 }
 
-// ============================================================================
-// Device Status
-// ============================================================================
+/// Blanket impl: any BlockDeviceExt automatically becomes a DynBlockDeviceExt.
+/// DynBlockDevice is already covered by the blanket impl above.
+impl<T: BlockDeviceExt> DynBlockDeviceExt for T {
+    fn erase_blocks(&mut self, start_block: u64, count: u64) -> Result<(), BlockDeviceError> {
+        BlockDeviceExt::erase_blocks(self, start_block, count).map_err(Into::into)
+    }
+    fn trim_blocks(&mut self, start_block: u64, count: u64) -> Result<(), BlockDeviceError> {
+        BlockDeviceExt::trim_blocks(self, start_block, count).map_err(Into::into)
+    }
+    fn status(&self) -> DeviceStatus {
+        BlockDeviceExt::status(self)
+    }
+}
 
-/// Device health and status information
+// IdentifiableBlockDevice
+
+pub trait IdentifiableBlockDevice: BlockDevice {
+    fn cid(&self) -> Option<&Cid> {
+        None
+    }
+    fn csd(&self) -> Option<&Csd> {
+        None
+    }
+}
+
+pub trait DynIdentifiableBlockDevice: DynBlockDevice {
+    fn cid(&self) -> Option<&Cid>;
+    fn csd(&self) -> Option<&Csd>;
+}
+
+impl<T: IdentifiableBlockDevice> DynIdentifiableBlockDevice for T {
+    fn cid(&self) -> Option<&Cid> {
+        IdentifiableBlockDevice::cid(self)
+    }
+    fn csd(&self) -> Option<&Csd> {
+        IdentifiableBlockDevice::csd(self)
+    }
+}
+
+// DeviceStatus
+
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceStatus {
-    /// Device is healthy
     pub healthy: bool,
-    /// Number of read errors
     pub read_errors: u64,
-    /// Number of write errors
     pub write_errors: u64,
-    /// Device temperature in Celsius (if available)
     pub temperature: Option<i32>,
-    /// Percentage of device lifetime used (0-100)
     pub wear_level: Option<u8>,
 }
 
@@ -289,50 +236,26 @@ impl Default for DeviceStatus {
     }
 }
 
-// ============================================================================
-// Helper Traits
-// ============================================================================
-
-/// Partition on a block device
-///
-/// Represents a logical partition (e.g., from MBR or GPT).
 pub trait Partition: BlockDevice {
-    /// Get the underlying device
     fn device(&self) -> &dyn DynBlockDevice;
-
-    /// Get partition offset (in blocks)
     fn offset(&self) -> u64;
-
-    /// Get partition size (in blocks)
     fn size(&self) -> u64;
 }
 
-/// Block cache trait
-///
-/// Optional caching layer for block devices.
 pub trait BlockCache: BlockDevice {
-    /// Invalidate cache for a range of blocks
     fn invalidate(&mut self, start_block: u64, count: u64);
-
-    /// Get cache statistics
     fn cache_stats(&self) -> CacheStats;
 }
 
-/// Cache statistics
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CacheStats {
-    /// Number of cache hits
     pub hits: u64,
-    /// Number of cache misses
     pub misses: u64,
-    /// Number of dirty blocks
     pub dirty_blocks: usize,
-    /// Cache size in blocks
     pub cache_size: usize,
 }
 
 impl CacheStats {
-    /// Calculate hit rate (0.0 to 1.0)
     pub fn hit_rate(&self) -> f32 {
         let total = self.hits + self.misses;
         if total == 0 {
@@ -343,29 +266,19 @@ impl CacheStats {
     }
 }
 
-// ============================================================================
-// Card Identification
-// ============================================================================
+// CID / CSD (SD/MMC identification)
 
-/// Card Identification (for SD/MMC/eMMC devices)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cid {
-    /// Manufacturer ID
     pub manufacturer_id: u8,
-    /// OEM/Application ID (2 ASCII characters)
     pub oem_id: [u8; 2],
-    /// Product name (5 ASCII characters)
     pub product_name: [u8; 5],
-    /// Product revision (major, minor)
     pub product_revision: (u8, u8),
-    /// Product serial number
     pub serial_number: u32,
-    /// Manufacturing date (year, month)
     pub manufacturing_date: (u16, u8),
 }
 
 impl Cid {
-    /// Parse CID from raw 16-byte buffer (big-endian)
     pub fn parse(raw: &[u8; 16]) -> Self {
         Self {
             manufacturer_id: raw[0],
@@ -378,19 +291,15 @@ impl Cid {
     }
 
     fn parse_mdt(byte13: u8, byte14: u8) -> (u16, u8) {
-        // Big-endian interpretation: byte13 is MSB, byte14 is LSB
         let mdt = u16::from_be_bytes([byte13, byte14]);
         let year = 2000 + ((mdt >> 4) & 0xFF);
         let month = (mdt & 0x0F) as u8;
         (year, month)
     }
 
-    /// Get product name as string (if valid UTF-8)
     pub fn product_name_str(&self) -> Option<&str> {
         core::str::from_utf8(&self.product_name).ok()
     }
-
-    /// Get OEM ID as string (if valid UTF-8)
     pub fn oem_id_str(&self) -> Option<&str> {
         core::str::from_utf8(&self.oem_id).ok()
     }
@@ -407,24 +316,13 @@ impl Cid {
     }
 }
 
-// ============================================================================
-// Card Specific Data
-// ============================================================================
-
-/// Card Specific Data (for SD/MMC/eMMC devices)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Csd {
-    /// CSD structure version
     pub version: CsdVersion,
-    /// Card capacity in bytes
     pub capacity: u64,
-    /// Maximum transfer rate in kbit/s
     pub max_transfer_rate: u32,
-    /// Read block length in bytes
     pub read_block_len: u16,
-    /// Write block length in bytes
     pub write_block_len: u16,
-    /// Card command classes supported (bitmap)
     pub card_command_classes: u16,
 }
 
@@ -438,11 +336,8 @@ pub enum CardType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsdVersion {
-    /// SD Standard Capacity (≤2GB)
     V1_0,
-    /// SD High Capacity (SDHC) or Extended Capacity (SDXC)
     V2_0,
-    /// SD Ultra Capacity (SDUC)
     V3_0,
 }
 
@@ -453,7 +348,6 @@ pub enum CsdParseError {
 }
 
 impl Csd {
-    /// Parse CSD from raw 16-byte buffer (big-endian)
     pub fn parse(raw: &[u8; 16]) -> Result<Self, CsdParseError> {
         let version = match raw[0] >> 6 {
             0 => CsdVersion::V1_0,
@@ -461,7 +355,6 @@ impl Csd {
             2 => CsdVersion::V3_0,
             _ => return Err(CsdParseError::UnknownVersion),
         };
-
         match version {
             CsdVersion::V1_0 => Self::parse_v1(raw, version),
             CsdVersion::V2_0 => Self::parse_v2(raw, version),
@@ -471,11 +364,9 @@ impl Csd {
 
     fn parse_v2(raw: &[u8; 16], version: CsdVersion) -> Result<Self, CsdParseError> {
         let c_size = u32::from_be_bytes([0, raw[7] & 0x3F, raw[8], raw[9]]);
-        let capacity = ((c_size + 1) as u64) * 512 * 1024;
-
         Ok(Self {
             version,
-            capacity,
+            capacity: ((c_size + 1) as u64) * 512 * 1024,
             max_transfer_rate: Self::parse_tran_speed(raw[3]),
             read_block_len: 512,
             write_block_len: 512,
@@ -485,22 +376,15 @@ impl Csd {
 
     fn parse_v1(raw: &[u8; 16], version: CsdVersion) -> Result<Self, CsdParseError> {
         let read_bl_len = (raw[10] & 0x0F) as u32;
-        let c_size_bytes = [raw[7], raw[8], raw[9]];
-        let c_size_24bit =
-            u32::from_be_bytes([0, c_size_bytes[0], c_size_bytes[1], c_size_bytes[2]]);
+        let c_size_24bit = u32::from_be_bytes([0, raw[7], raw[8], raw[9]]);
         let c_size = (c_size_24bit >> 2) & 0xFFF;
-
         let mult_bytes = u16::from_be_bytes([raw[5], raw[6]]);
         let c_size_mult = ((mult_bytes >> 7) & 0x07) as u32;
-
         let mult = 1 << (c_size_mult + 2);
-        let block_nr = (c_size + 1) * mult;
         let block_len: u16 = 1 << read_bl_len;
-        let capacity = block_nr as u64 * block_len as u64;
-
         Ok(Self {
             version,
-            capacity,
+            capacity: (c_size + 1) as u64 * mult as u64 * block_len as u64,
             max_transfer_rate: Self::parse_tran_speed(raw[3]),
             read_block_len: block_len,
             write_block_len: block_len,
@@ -510,11 +394,9 @@ impl Csd {
 
     fn parse_v3(raw: &[u8; 16], version: CsdVersion) -> Result<Self, CsdParseError> {
         let c_size = u32::from_be_bytes([0, raw[7] & 0x3F, raw[8], raw[9]]);
-        let capacity = ((c_size + 1) as u64) * 512 * 1024;
-
         Ok(Self {
             version,
-            capacity,
+            capacity: ((c_size + 1) as u64) * 512 * 1024,
             max_transfer_rate: Self::parse_tran_speed(raw[3]),
             read_block_len: 512,
             write_block_len: 512,
@@ -541,7 +423,6 @@ impl Csd {
             0xF => 80,
             _ => 0,
         };
-
         let rate_unit = match byte >> 3 {
             0 => 100,
             1 => 1_000,
@@ -549,7 +430,6 @@ impl Csd {
             3 => 100_000,
             _ => 0,
         };
-
         time_value * rate_unit
     }
 
@@ -557,17 +437,12 @@ impl Csd {
         u16::from_be_bytes([raw[4] & 0x0F, raw[5]])
     }
 
-    /// Get capacity in megabytes
     pub fn capacity_mb(&self) -> u64 {
         self.capacity / (1024 * 1024)
     }
-
-    /// Get capacity in gigabytes
     pub fn capacity_gb(&self) -> u64 {
         self.capacity / (1024 * 1024 * 1024)
     }
-
-    /// Get number of 512-byte blocks
     pub fn block_count(&self) -> u64 {
         self.capacity / 512
     }
@@ -582,30 +457,4 @@ impl Csd {
             card_command_classes: 0,
         }
     }
-}
-
-// ============================================================================
-// Identifiable Block Device
-// ============================================================================
-
-/// Extended block device trait for devices with identification
-///
-/// This trait is optional and only implemented by devices that have
-/// CID/CSD registers (SD cards, MMC, eMMC).
-pub trait IdentifiableBlockDevice: BlockDevice {
-    /// Get Card Identification (if available)
-    fn cid(&self) -> Option<&Cid> {
-        None
-    }
-
-    /// Get Card Specific Data (if available)
-    fn csd(&self) -> Option<&Csd> {
-        None
-    }
-}
-
-/// Type-erased identifiable block device trait
-pub trait DynIdentifiableBlockDevice: DynBlockDevice {
-    fn cid(&self) -> Option<&Cid>;
-    fn csd(&self) -> Option<&Csd>;
 }

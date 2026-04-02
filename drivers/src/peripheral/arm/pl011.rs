@@ -255,62 +255,6 @@ impl NonBlockingSerial for PL011 {
     }
 }
 
-// ============================================================================
-// Type-Erased Serial Port Implementations (using SerialError)
-// ============================================================================
-
-impl DynSerialPort for PL011 {
-    fn configure(&mut self, config: SerialConfig) -> Result<(), SerialError> {
-        SerialPort::configure(self, config).map_err(Into::into)
-    }
-
-    fn write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
-        SerialPort::write_byte(self, byte).map_err(Into::into)
-    }
-
-    fn write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
-        SerialPort::write(self, bytes).map_err(Into::into)
-    }
-
-    fn read_byte(&mut self) -> Result<u8, SerialError> {
-        SerialPort::read_byte(self).map_err(Into::into)
-    }
-
-    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
-        SerialPort::read(self, buffer).map_err(Into::into)
-    }
-
-    fn flush(&mut self) -> Result<(), SerialError> {
-        SerialPort::flush(self).map_err(Into::into)
-    }
-
-    fn is_busy(&self) -> bool {
-        SerialPort::is_busy(self)
-    }
-
-    fn as_dyn_nonblocking(&mut self) -> Option<&mut dyn DynNonBlockingSerial> {
-        Some(self)
-    }
-}
-
-impl DynNonBlockingSerial for PL011 {
-    fn try_write_byte(&mut self, byte: u8) -> Result<(), SerialError> {
-        NonBlockingSerial::try_write_byte(self, byte).map_err(Into::into)
-    }
-
-    fn try_write(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
-        NonBlockingSerial::try_write(self, bytes).map_err(Into::into)
-    }
-
-    fn try_read_byte(&mut self) -> Result<u8, SerialError> {
-        NonBlockingSerial::try_read_byte(self).map_err(Into::into)
-    }
-
-    fn try_read(&mut self, buffer: &mut [u8]) -> Result<usize, SerialError> {
-        NonBlockingSerial::try_read(self, buffer).map_err(Into::into)
-    }
-}
-
 // SAFETY: PL011 wraps memory-mapped hardware that can be safely
 // accessed from any thread when protected by synchronization.
 unsafe impl Send for PL011 {}

@@ -745,7 +745,7 @@ impl Emmc {
 }
 
 // ============================================================================
-// HAL Implementation (using EmmcError)
+// HAL Implementation
 // ============================================================================
 
 impl BlockDevice for Emmc {
@@ -827,36 +827,6 @@ impl IdentifiableBlockDevice for Emmc {
 
     fn csd(&self) -> Option<&Csd> {
         Some(&self.csd)
-    }
-}
-
-// ============================================================================
-// Type-Erased Block Device Implementation
-// ============================================================================
-
-impl DynBlockDevice for Emmc {
-    fn info(&self) -> BlockDeviceInfo {
-        BlockDevice::info(self)
-    }
-
-    fn read_blocks(
-        &self,
-        start_block: u64,
-        buffers: &mut [&mut [u8]],
-    ) -> Result<(), BlockDeviceError> {
-        BlockDevice::read_blocks(self, start_block, buffers).map_err(BlockDeviceError::from)
-    }
-
-    fn write_blocks(&self, start_block: u64, buffers: &[&[u8]]) -> Result<(), BlockDeviceError> {
-        BlockDevice::write_blocks(self, start_block, buffers).map_err(BlockDeviceError::from)
-    }
-
-    fn flush(&mut self) -> Result<(), BlockDeviceError> {
-        BlockDevice::flush(self).map_err(BlockDeviceError::from)
-    }
-
-    fn is_ready(&self) -> bool {
-        BlockDevice::is_ready(self)
     }
 }
 

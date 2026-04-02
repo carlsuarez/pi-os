@@ -266,11 +266,16 @@ impl Platform {
                     }
 
                     "16550a-uart" | "ns16550a" => {
-                        let uart = if ARCH == Architecture::X86 {
-                            x86::uart16550::Uart16550::new_pio(device.base_addr as u16)
-                        } else {
-                            x86::uart16550::Uart16550::new_mmio(device.base_addr)
-                        };
+                        #[cfg(target_arch = "x86")]
+                        let uart = x86::uart16550::Uart16550::<x86::uart16550::Pio>::new(
+                            device.base_addr as usize,
+                        );
+
+                        #[cfg(not(target_arch = "x86"))]
+                        let uart = x86::uart16550::Uart16550::<x86::uart16550::Mmio>::new(
+                            device.base_addr as usize,
+                        );
+
                         device_mgr.register_serial(device.name, uart)?;
                     }
 
@@ -283,11 +288,11 @@ impl Platform {
                     }
 
                     "arm,armv7-timer" | "arm,armv8-timer" => {
-                        todo!("ARMv7/ARMv8 generic timer driver");
+                        // TODO ARMv7/ARMv8 generic timer driver not yet implemented
                     }
 
                     "i8254-pit" | "intel,8254" => {
-                        todo!("I8254 PIT driver");
+                        // TODO I8254 PIT driver not yet implemented
                     }
 
                     // --------------------------------------------------------
@@ -299,18 +304,18 @@ impl Platform {
                     }
 
                     "arm,gic-400" | "arm,cortex-a15-gic" | "arm,gic-v3" => {
-                        todo!("ARM GIC driver");
+                        // TODO ARM GIC driver not yet implemented
                     }
 
                     "i8259-pic" | "intel,8259" => {
-                        todo!("I8259 PIC driver");
+                        // TODO I8259 PIC driver not yet implemented
                     }
 
                     // --------------------------------------------------------
                     // Framebuffer
                     // --------------------------------------------------------
                     "multiboot2-fb" | "simple-framebuffer" => {
-                        todo!("Simple framebuffer driver");
+                        // TODO: implement a simple framebuffer driver that can use the Multiboot2 framebuffer info
                     }
 
                     // --------------------------------------------------------
@@ -319,6 +324,14 @@ impl Platform {
                     "brcm,bcm2835-sdhost" | "brcm,bcm2711-emmc2" => {
                         let block_dev = bcm2835::emmc::Emmc::new(device.base_addr);
                         device_mgr.register_block(device.name, block_dev)?;
+                    }
+
+                    // --------------------------------------------------------
+                    // Consoles
+                    // --------------------------------------------------------
+                    "vga-text" => {
+                        // VGA text console is initialized separately in subsystems::init_devices
+                        // via VgaText::new() — no device manager registration needed here.
                     }
 
                     _ => {
