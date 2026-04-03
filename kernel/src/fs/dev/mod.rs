@@ -4,20 +4,20 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use common::sync::SpinLock;
+use spin::Mutex;
 pub use uart_file::UartFile;
 pub mod framebuffer_file;
 pub mod uart_file;
 pub use framebuffer_file::FrameBufferFile;
 
 pub struct DevFs {
-    devices: SpinLock<BTreeMap<String, Arc<dyn File>>>,
+    devices: Mutex<BTreeMap<String, Arc<dyn File>>>,
 }
 
 impl DevFs {
     pub fn new() -> Self {
         Self {
-            devices: SpinLock::new(BTreeMap::new()),
+            devices: Mutex::new(BTreeMap::new()),
         }
     }
 

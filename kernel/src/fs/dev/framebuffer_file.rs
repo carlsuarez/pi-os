@@ -4,7 +4,7 @@ use crate::fs::file::FileType;
 use crate::subsystems::device_manager;
 use alloc::format;
 use alloc::string::String;
-use drivers::hal::framebuffer::FrameBuffer;
+use drivers::hal::fb::FrameBuffer;
 
 /// File wrapper around a framebuffer device
 pub struct FrameBufferFile {

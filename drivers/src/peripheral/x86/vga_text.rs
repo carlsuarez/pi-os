@@ -32,7 +32,7 @@ const CRTC_DATA_PORT: u16 = 0x3D5;
 const CRTC_CURSOR_HIGH: u8 = 0x0E;
 const CRTC_CURSOR_LOW: u8 = 0x0F;
 
-// ── Colour definitions ───────────────────────────────────────────────────────
+//  Colour definitions
 
 /// Standard 4-bit VGA colours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,7 +73,7 @@ struct VgaBuffer {
 
 // SAFETY: we only ever construct one VgaBuffer (inside VgaText) and access
 // it through the &mut self methods of VgaText, which is itself guarded by a
-// SpinLock in the subsystem layer.
+// Mutex in the subsystem layer.
 unsafe impl Send for VgaBuffer {}
 
 impl VgaBuffer {

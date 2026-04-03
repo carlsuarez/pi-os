@@ -24,15 +24,15 @@
 //! ```
 
 use crate::hal::block_device::{BlockDevice, DynBlockDevice};
-use crate::hal::framebuffer::FrameBuffer;
+use crate::hal::fb::FrameBuffer;
 use crate::hal::interrupt::{DynInterruptController, InterruptController};
 use crate::hal::serial::DynSerialPort;
 use crate::hal::timer::DynTimer;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
-use common::sync::SpinLock;
 use core::cell::OnceCell;
+use spin::Mutex;
 
 struct OnceCellChannel {
     inner: OnceCell<usize>,
@@ -46,17 +46,17 @@ static SYS_TIMER_CHANNEL: OnceCellChannel = OnceCellChannel {
 
 /// Device types that can be managed
 pub enum Device {
-    Serial(Arc<SpinLock<dyn DynSerialPort>>),
+    Serial(Arc<Mutex<dyn DynSerialPort>>),
     Block(Arc<dyn DynBlockDevice>),
-    FrameBuffer(Arc<SpinLock<dyn FrameBuffer>>),
-    Timer(Arc<SpinLock<dyn DynTimer>>),
-    InterruptController(Arc<SpinLock<dyn DynInterruptController>>),
+    FrameBuffer(Arc<Mutex<dyn FrameBuffer>>),
+    Timer(Arc<Mutex<dyn DynTimer>>),
+    InterruptController(Arc<Mutex<dyn DynInterruptController>>),
 }
 
 impl Device {
     /// Create a serial device from any DynSerialPort implementation
     pub fn new_serial<T: DynSerialPort + 'static>(serial: T) -> Self {
-        Device::Serial(Arc::new(SpinLock::new(serial)))
+        Device::Serial(Arc::new(Mutex::new(serial)))
     }
 
     /// Create a block device from any BlockDevice implementation
@@ -66,17 +66,17 @@ impl Device {
 
     /// Create a framebuffer device from any FrameBuffer implementation
     pub fn new_framebuffer<T: FrameBuffer + 'static>(fb: T) -> Self {
-        Device::FrameBuffer(Arc::new(SpinLock::new(fb)))
+        Device::FrameBuffer(Arc::new(Mutex::new(fb)))
     }
 
     /// Create a timer device from any Timer implementation
     pub fn new_timer<T: DynTimer + 'static>(timer: T) -> Self {
-        Device::Timer(Arc::new(SpinLock::new(timer)))
+        Device::Timer(Arc::new(Mutex::new(timer)))
     }
 
     /// Create an interrupt controller from any InterruptController implementation
     pub fn new_interrupt_controller<T: DynInterruptController + 'static>(intc: T) -> Self {
-        Device::InterruptController(Arc::new(SpinLock::new(intc)))
+        Device::InterruptController(Arc::new(Mutex::new(intc)))
     }
 }
 
@@ -112,7 +112,7 @@ impl DeviceManager {
     // ========================================================================
 
     /// Get a serial port by name
-    pub fn serial(&self, name: &str) -> Option<Arc<SpinLock<dyn DynSerialPort>>> {
+    pub fn serial(&self, name: &str) -> Option<Arc<Mutex<dyn DynSerialPort>>> {
         match self.get(name)? {
             Device::Serial(serial) => Some(Arc::clone(serial)),
             _ => None,
@@ -128,7 +128,7 @@ impl DeviceManager {
     }
 
     /// Get a framebuffer by name
-    pub fn framebuffer(&self, name: &str) -> Option<Arc<SpinLock<dyn FrameBuffer>>> {
+    pub fn framebuffer(&self, name: &str) -> Option<Arc<Mutex<dyn FrameBuffer>>> {
         match self.get(name)? {
             Device::FrameBuffer(fb) => Some(Arc::clone(fb)),
             _ => None,
@@ -136,7 +136,7 @@ impl DeviceManager {
     }
 
     /// Get a timer by name
-    pub fn timer(&self, name: &str) -> Option<Arc<SpinLock<dyn DynTimer>>> {
+    pub fn timer(&self, name: &str) -> Option<Arc<Mutex<dyn DynTimer>>> {
         match self.get(name)? {
             Device::Timer(timer) => Some(Arc::clone(timer)),
             _ => None,
@@ -147,7 +147,7 @@ impl DeviceManager {
     pub fn interrupt_controller(
         &self,
         name: &str,
-    ) -> Option<Arc<SpinLock<dyn DynInterruptController>>> {
+    ) -> Option<Arc<Mutex<dyn DynInterruptController>>> {
         match self.get(name)? {
             Device::InterruptController(intc) => Some(Arc::clone(intc)),
             _ => None,
@@ -161,7 +161,7 @@ impl DeviceManager {
     /// Get the console (default serial port)
     ///
     /// Tries in order: "console", "serial0", first serial device
-    pub fn serial_console(&self) -> Option<Arc<SpinLock<dyn DynSerialPort>>> {
+    pub fn serial_console(&self) -> Option<Arc<Mutex<dyn DynSerialPort>>> {
         if let Some(console) = self.serial("console") {
             return Some(console);
         }
@@ -182,7 +182,7 @@ impl DeviceManager {
     /// Get the system timer (default timer)
     ///
     /// Tries in order: "system_timer", "timer", first timer device
-    pub fn system_timer(&self) -> Option<Arc<SpinLock<dyn DynTimer>>> {
+    pub fn system_timer(&self) -> Option<Arc<Mutex<dyn DynTimer>>> {
         self.timer("system_timer")
             .or_else(|| self.timer("timer"))
             .or_else(|| {
@@ -203,7 +203,7 @@ impl DeviceManager {
     /// Get the interrupt controller (default)
     ///
     /// Tries in order: "intc", "pic", "gic", first interrupt controller
-    pub fn irq_controller(&self) -> Option<Arc<SpinLock<dyn DynInterruptController>>> {
+    pub fn irq_controller(&self) -> Option<Arc<Mutex<dyn DynInterruptController>>> {
         self.interrupt_controller("intc")
             .or_else(|| self.interrupt_controller("pic"))
             .or_else(|| self.interrupt_controller("gic"))
@@ -312,6 +312,21 @@ impl DeviceManager {
     /// Get total device count
     pub fn count(&self) -> usize {
         self.devices.len()
+    }
+
+    // ======================================================================
+    // Device Specific Iterators
+    // ======================================================================
+
+    /// Iterate over all serial devices
+    pub fn serial_devices(&self) -> impl Iterator<Item = Arc<Mutex<dyn DynSerialPort>>> + '_ {
+        self.devices.values().filter_map(|d| {
+            if let Device::Serial(serial) = d {
+                Some(serial.clone())
+            } else {
+                None
+            }
+        })
     }
 }
 

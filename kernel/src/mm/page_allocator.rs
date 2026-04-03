@@ -1,7 +1,7 @@
 use crate::mm::buddy_allocator::BuddyAllocator;
 use crate::mm::page_table::Page;
 use crate::mm::page_table::{L1Table, L2Table, PageBlock};
-use common::sync::SpinLock;
+use spin::Mutex;
 use core::cell::OnceCell;
 
 pub const PAGE_SIZE: usize = 4096;
@@ -15,7 +15,7 @@ static PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
 /// Provides RAII-style wrappers for allocated memory to ensure proper
 /// deallocation when values go out of scope.
 pub struct PageAllocator {
-    inner: OnceCell<SpinLock<BuddyAllocator>>,
+    inner: OnceCell<Mutex<BuddyAllocator>>,
 }
 
 impl PageAllocator {
@@ -46,7 +46,7 @@ impl PageAllocator {
         }
 
         // Try to set the OnceCell
-        if self.inner.set(SpinLock::new(buddy)).is_err() {
+        if self.inner.set(Mutex::new(buddy)).is_err() {
             panic!("PageAllocator already initialized");
         }
     }
@@ -102,11 +102,11 @@ impl PageAllocator {
     }
 }
 
-// SAFETY: PageAllocator wraps a OnceCell<SpinLock<BuddyAllocator>>.
+// SAFETY: PageAllocator wraps a OnceCell<Mutex<BuddyAllocator>>.
 // - OnceCell provides thread-safe one-time initialization
-// - SpinLock ensures exclusive access to the BuddyAllocator
+// - Mutex ensures exclusive access to the BuddyAllocator
 // - BuddyAllocator itself is Send + Sync (manages its own invariants)
-// Thread safety is guaranteed by the SpinLock wrapper.
+// Thread safety is guaranteed by the Mutex wrapper.
 unsafe impl Send for PageAllocator {}
 unsafe impl Sync for PageAllocator {}
 

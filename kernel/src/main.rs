@@ -7,9 +7,11 @@
 extern crate alloc;
 
 mod arch;
+mod boot;
 mod fs;
 mod irq;
 mod kcore;
+mod logger;
 mod mm;
 mod process;
 mod subsystems;
@@ -34,9 +36,36 @@ use subsystems::device_manager;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
-    kprintln!("Booting {} kernel", Platform::name());
-
+    log::info!("Booting {} kernel", Platform::name());
     print_devices();
+
+    // Draw something
+    if let Some(fb_dev) = crate::subsystems::device_manager()
+        .lock()
+        .get("framebuffer")
+    {
+        use drivers::device_manager::Device;
+        if let Device::FrameBuffer(fb) = fb_dev {
+            let mut fb = fb.lock();
+
+            // Clear to dark blue
+            fb.clear(0x00001A);
+
+            // White rectangle in the center
+            let cx = (fb.width() / 2 - 50) as u32;
+            let cy = (fb.height() / 2 - 50) as u32;
+            fb.draw_rect(cx, cy, 100, 100, 0xFFFFFF);
+
+            let width = fb.width() as u32;
+            let height = fb.height() as u32;
+
+            // Red horizontal line
+            fb.draw_hline(0, width - 1, height / 2, 0xFF0000);
+
+            // Green vertical line
+            fb.draw_vline(width / 2, 0, height - 1, 0x00FF00);
+        }
+    }
 
     kernel_main_loop();
 }

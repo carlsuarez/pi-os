@@ -1,5 +1,5 @@
 use super::mailbox::{Channel, Mailbox, tags};
-use crate::hal::framebuffer::{
+use crate::hal::fb::{
     FrameBuffer, FrameBufferConfig, FrameBufferError, FrameBufferInfo, PixelFormat,
 };
 use core::ptr::{read_volatile, write_volatile};

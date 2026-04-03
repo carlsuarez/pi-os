@@ -199,17 +199,17 @@ impl Emmc {
     ///
     /// - EMMC registers must be properly mapped at `EMMC_BASE`
     /// - Only one instance should exist per EMMC hardware
-    pub const unsafe fn new(base: usize) -> Self {
+    pub const unsafe fn new(base: usize) -> Result<Self, EmmcError> {
         if base != EMMC_BASE {
-            panic!("Invalid base address for BCM2835 EMMC");
+            return Err(EmmcError::HardwareError);
         }
-        Self {
+        Ok(Self {
             base: EMMC_BASE,
             cid: Cid::default(),
             csd: Csd::default(),
             rca: 0,
             card_type: CardType::Unknown,
-        }
+        })
     }
 
     /// Read a 32-bit register

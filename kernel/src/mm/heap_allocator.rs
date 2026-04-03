@@ -1,17 +1,17 @@
 use super::buddy_allocator::BuddyAllocator;
-use common::sync::SpinLock;
 use core::alloc::{GlobalAlloc, Layout};
+use spin::Mutex;
 
 /// Global heap allocator using buddy allocation
 pub struct HeapAllocator {
-    inner: SpinLock<Option<BuddyAllocator>>,
+    inner: Mutex<Option<BuddyAllocator>>,
 }
 
 impl HeapAllocator {
     /// Creates a new uninitialized heap allocator
     const fn new() -> Self {
         Self {
-            inner: SpinLock::new(None),
+            inner: Mutex::new(None),
         }
     }
 

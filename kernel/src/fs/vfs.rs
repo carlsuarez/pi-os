@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use common::sync::SpinLock;
+use spin::Mutex;
 
 /// A mount point in the VFS.
 pub struct Mount {
@@ -16,13 +16,13 @@ pub struct Mount {
 static VFS: VirtFS = VirtFS::new();
 
 pub struct VirtFS {
-    mounts: SpinLock<Vec<Mount>>,
+    mounts: Mutex<Vec<Mount>>,
 }
 
 impl VirtFS {
     pub const fn new() -> Self {
         Self {
-            mounts: SpinLock::new(Vec::new()),
+            mounts: Mutex::new(Vec::new()),
         }
     }
 

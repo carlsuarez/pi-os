@@ -245,17 +245,6 @@ pub enum FrameBufferError {
     NotSupported,
 }
 
-impl core::fmt::Display for FrameBufferError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            FrameBufferError::MailboxFailed => write!(f, "Mailbox call failed"),
-            FrameBufferError::AllocationFailed => write!(f, "GPU failed to allocate framebuffer"),
-            FrameBufferError::InvalidConfig => write!(f, "Invalid configuration"),
-            FrameBufferError::NotSupported => write!(f, "Operation not supported"),
-        }
-    }
-}
-
 /// Color utility functions
 pub mod color {
     /// Create an ARGB color from components

@@ -6,9 +6,9 @@ use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use common::sync::{RwLock, SpinLock};
 use core::sync::atomic::AtomicU32;
 use drivers::hal::block_device::DynBlockDevice;
+use spin::{Mutex, RwLock};
 
 /// FAT32 filesystem implementation
 #[derive(Clone)]
@@ -18,7 +18,7 @@ pub struct Fat32FsInner {
     // Protects metadata operations (create, delete, mkdir, rmdir)
     metadata_lock: Arc<RwLock<()>>,
     // Protects FAT table access
-    fat_lock: Arc<SpinLock<()>>,
+    fat_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Copy, Clone)]
@@ -100,19 +100,24 @@ pub struct Fat32File {
 }
 
 impl Fat32File {
-    pub fn new(fs: Arc<Fat32FsInner>, start_cluster: u32, size: u32, name: String) -> Self {
+    pub fn new(
+        fs: Arc<Fat32FsInner>,
+        start_cluster: u32,
+        size: u32,
+        name: String,
+    ) -> Result<Self, Fat32Error> {
         // Validate cluster for non-empty files
         if start_cluster < 2 && size > 0 {
-            panic!("Invalid cluster {} for non-empty file", start_cluster);
+            return Err(Fat32Error::InvalidCluster);
         }
 
-        Self {
+        Ok(Self {
             fs,
             start_cluster,
             size: Arc::new(AtomicU32::new(size)),
             name,
             io_lock: RwLock::new(()),
-        }
+        })
     }
 
     /// Get current file size
@@ -296,7 +301,7 @@ impl Fat32FsInner {
             dev,
             fat_info: fat,
             metadata_lock: Arc::new(RwLock::new(())),
-            fat_lock: Arc::new(SpinLock::new(())),
+            fat_lock: Arc::new(Mutex::new(())),
         };
 
         Ok(Arc::new(fs))
@@ -333,7 +338,7 @@ impl Fat32FsInner {
             entry.first_cluster,
             entry.size,
             entry.name,
-        ))
+        )?)
     }
 
     pub fn ls(&self, path: &str) -> Result<Vec<String>, Fat32Error> {

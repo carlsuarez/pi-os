@@ -36,4 +36,4 @@ cfg_if::cfg_if! {
 }
 
 // Type alias that works everywhere
-pub type IrqSpinLock<T> = common::sync::irq_spinlock::IrqSpinLock<T, Irq>;
+pub type IrqSpinLock<T> = common::sync::irq_mutex::IrqMutex<T, Irq>;

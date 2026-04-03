@@ -34,7 +34,7 @@ pub fn dispatch(irq: u32, tf: &mut TrapFrame) {
         handler(tf);
     } else {
         // No handler registered - spurious interrupt
-        crate::kprintln!("Unhandled IRQ: {}", irq);
+        log::info!("Unhandled IRQ: {}", irq);
     }
 
     // Enter critical section for cleanup

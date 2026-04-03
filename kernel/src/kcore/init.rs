@@ -1,11 +1,14 @@
-use crate::kcore::delay_cycles;
+use crate::boot::BootInfo;
+use crate::logger;
 use crate::mm::mmu::{MmuOps, PlatformMmu};
 use crate::mm::{heap_allocator, page_allocator::page_allocator};
-use crate::subsystems::console_write;
+use crate::subsystems::enable_graphical_framebuffer;
+use crate::subsystems::log_sinks::SERIAL_SINK;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use drivers::hal::console;
-use drivers::platform::{BootInfo, MemoryType, Platform};
+use drivers::platform::{MemoryType, Platform};
 
 /// Physical address of the kernel L1 page table (ARM only).
 /// Written once by setup_memory_management(), read by ArmMmu::init()
@@ -27,9 +30,11 @@ pub static KERNEL_PD_PHYS: AtomicUsize = AtomicUsize::new(0);
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_init(machine_type: u32, atags_addr: u32) {
     unsafe {
-        let boot_info = determine_boot_info(machine_type, atags_addr);
+        // Early init (device discovery, arch-specific setup, etc)
+        crate::boot::init(determine_boot_info(machine_type, atags_addr))
+            .expect("Platform initialization failed");
 
-        crate::subsystems::init_platform(boot_info);
+        logger::init(log::LevelFilter::Info);
 
         let layout = setup_memory_management();
 
@@ -47,10 +52,14 @@ pub extern "C" fn kernel_init(machine_type: u32, atags_addr: u32) {
         //     PlatformMmu::init(pd_phys);
         // }
 
-        console_write("Kernel Early Initialization Complete\n");
+        log::info!("Kernel Early Initialization Complete\n");
 
-        const THREE_SECONDS_CYCLES: u64 = 3000 * 1_000_000;
-        delay_cycles(THREE_SECONDS_CYCLES);
+        logger::attach_runtime(vec![&SERIAL_SINK]);
+
+        // enable_graphical_framebuffer().expect("Failed to enable graphical framebuffer");
+
+        log::info!("Runtime logger attached\n");
+
         log_memory_layout(
             layout.kernel_end,
             layout.heap_start,
@@ -59,13 +68,9 @@ pub extern "C" fn kernel_init(machine_type: u32, atags_addr: u32) {
             layout.page_alloc_end,
             layout.page_table,
         );
-        delay_cycles(THREE_SECONDS_CYCLES);
         log_system_info();
-        delay_cycles(THREE_SECONDS_CYCLES);
         log_discovered_hardware();
-        delay_cycles(THREE_SECONDS_CYCLES);
         log_available_devices();
-        delay_cycles(THREE_SECONDS_CYCLES);
     }
 }
 
@@ -299,67 +304,54 @@ fn log_memory_layout(
     heap_end: usize,
     page_start: usize,
     page_end: usize,
-    // ARM: Some((l1_start, l1_end))  — 16 KB L1 table
-    // x86: Some((pd_start, pd_end))  —  4 KB page directory
-    // other: None
     page_table: Option<(usize, usize)>,
 ) {
-    use alloc::format;
-
-    console_write("\nMemory Layout:\n");
-
-    let msg = format!("  Kernel End:     0x{:08x}\n", kernel_end);
-    console_write(&msg);
+    log::info!("Memory Layout:");
+    log::info!("  Kernel End:     0x{:08x}", kernel_end);
 
     if let Some((pt_start, pt_end)) = page_table {
-        let size_bytes = pt_end - pt_start;
-        let msg = format!(
-            "  Page Table:     0x{:08x} - 0x{:08x} ({} B)\n",
-            pt_start, pt_end, size_bytes,
+        log::info!(
+            "  Page Table:     0x{:08x} - 0x{:08x} ({} B)",
+            pt_start,
+            pt_end,
+            pt_end - pt_start
         );
-        console_write(&msg);
     }
 
-    let heap_kb = (heap_end - heap_start) / 1024;
-    let msg = format!(
-        "  Heap:           0x{:08x} - 0x{:08x} ({} KB)\n",
-        heap_start, heap_end, heap_kb,
+    log::info!(
+        "  Heap:           0x{:08x} - 0x{:08x} ({} KB)",
+        heap_start,
+        heap_end,
+        (heap_end - heap_start) / 1024
     );
-    console_write(&msg);
 
-    let page_mb = (page_end - page_start) / (1024 * 1024);
-    let msg = format!(
-        "  Page Allocator: 0x{:08x} - 0x{:08x} ({} MB)\n",
-        page_start, page_end, page_mb,
+    log::info!(
+        "  Page Allocator: 0x{:08x} - 0x{:08x} ({} MB)",
+        page_start,
+        page_end,
+        (page_end - page_start) / (1024 * 1024)
     );
-    console_write(&msg);
 }
 
+// log_system_info
 fn log_system_info() {
-    use alloc::format;
-
-    console_write("\nSystem Information:\n");
-
-    let msg = format!("  Platform:      {}\n", Platform::name());
-    console_write(&msg);
-    let msg = format!("  Architecture:  {}\n", Platform::arch());
-    console_write(&msg);
-    let total_mb = Platform::total_ram() / (1024 * 1024);
-    let msg = format!("  Total RAM:     {} MB\n", total_mb);
-    console_write(&msg);
+    log::info!("System Information:");
+    log::info!("  Platform:     {}", Platform::name());
+    log::info!("  Architecture: {}", Platform::arch());
+    log::info!(
+        "  Total RAM:    {} MB",
+        Platform::total_ram() / (1024 * 1024)
+    );
 
     if let Some(cmdline) = Platform::cmdline() {
-        let msg = format!("  Command Line:  {}\n", cmdline);
-        console_write(&msg);
+        log::info!("  Command Line: {}", cmdline);
     }
 }
 
+// log_discovered_hardware
 fn log_discovered_hardware() {
-    use alloc::format;
-
-    console_write("\nDiscovered Hardware:\n");
-
-    console_write("  Memory Regions:\n");
+    log::info!("Discovered Hardware:");
+    log::info!("  Memory Regions:");
     for region in Platform::memory_regions() {
         let type_str = match region.mem_type {
             MemoryType::Available => "Available",
@@ -368,45 +360,45 @@ fn log_discovered_hardware() {
             MemoryType::Kernel => "Kernel",
             MemoryType::Framebuffer => "Framebuffer",
         };
-        let size_kb = region.size / 1024;
-        let msg = format!(
-            "    {:12} : 0x{:08x} - 0x{:08x} ({} KB)\n",
+        log::info!(
+            "    {:12} : 0x{:08x} - 0x{:08x} ({} KB)",
             type_str,
             region.base,
             region.base + region.size,
-            size_kb,
+            region.size / 1024,
         );
-        console_write(&msg);
     }
 
-    console_write("  Devices:\n");
+    log::info!("  Devices:");
     for device in Platform::devices() {
-        let msg = format!(
-            "    {} ({}) @ 0x{:08x}",
-            device.name, device.compatible, device.base_addr,
-        );
-        console_write(&msg);
-        if let Some(irq) = device.irq {
-            let msg = format!(" IRQ {}", irq);
-            console_write(&msg);
+        match device.irq {
+            Some(irq) => log::info!(
+                "    {} ({}) @ 0x{:08x} IRQ {}",
+                device.name,
+                device.compatible,
+                device.base_addr,
+                irq
+            ),
+            None => log::info!(
+                "    {} ({}) @ 0x{:08x}",
+                device.name,
+                device.compatible,
+                device.base_addr
+            ),
         }
-        console_write("\n");
     }
 }
 
+// log_available_devices
 fn log_available_devices() {
     use crate::device_manager;
-    use drivers::device_manager::DeviceManager;
-
     let names: Vec<alloc::string::String> = {
         let mgr = device_manager().lock();
         mgr.list().cloned().collect()
     };
 
-    console_write("\nRegistered Devices:\n");
-    for name in names {
-        console_write("  - ");
-        console_write(&name);
-        console_write("\n");
+    log::info!("Registered Devices:");
+    for name in &names {
+        log::info!("  - {}", name);
     }
 }

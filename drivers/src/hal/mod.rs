@@ -22,7 +22,7 @@
 
 pub mod block_device;
 pub mod console;
-pub mod framebuffer;
+pub mod fb;
 pub mod gpio;
 pub mod interrupt;
 pub mod serial;

@@ -301,6 +301,6 @@ impl BuddyAllocator {
 // SAFETY: BuddyAllocator's raw pointers point to memory it exclusively manages.
 // The allocator maintains invariants that these pointers are always valid within
 // its memory region. Thread safety is guaranteed by external synchronization
-// (SpinLock in HeapAllocator).
+// (Mutex in HeapAllocator).
 unsafe impl Send for BuddyAllocator {}
 unsafe impl Sync for BuddyAllocator {}

@@ -238,7 +238,7 @@ impl MmuOps for X86Mmu {
             let pdi = pd_index(va);
             let pti = pt_index(va);
 
-            // ── Locate or create the PT for this PDE ───────────────────────
+            //  Locate or create the PT for this PDE 
             let pde = unsafe { ptr::read_volatile(pd.add(pdi)) };
             let pt: *mut u32 = if pde & X86_PRESENT != 0 {
                 // PT already exists.  Strip flags bits to get physical base.

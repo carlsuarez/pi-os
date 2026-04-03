@@ -36,13 +36,12 @@ impl Channel {
 }
 
 impl From<usize> for Channel {
-    fn from(value: usize) -> Self {
+    fn from(value: usize) -> Channel {
         match value {
-            0 => Channel::Channel0,
             1 => Channel::Channel1,
             2 => Channel::Channel2,
             3 => Channel::Channel3,
-            _ => panic!("Invalid channel number: {}", value),
+            _ => Channel::Channel0,
         }
     }
 }
@@ -56,6 +55,8 @@ impl From<usize> for Channel {
 pub enum Bcm2835TimerError {
     /// Invalid channel number (must be 0-3).
     InvalidChannel,
+    /// Invalid base address.
+    InvalidBaseAddress,
     /// Timer interval is too large (hardware limitation).
     IntervalTooLarge,
     /// Counter overflow detected.
@@ -68,6 +69,7 @@ impl From<Bcm2835TimerError> for TimerError {
             Bcm2835TimerError::InvalidChannel => TimerError::InvalidHandle,
             Bcm2835TimerError::IntervalTooLarge => TimerError::IntervalOutOfRange,
             Bcm2835TimerError::CounterOverflow => TimerError::Hardware,
+            Bcm2835TimerError::InvalidBaseAddress => TimerError::Hardware,
         }
     }
 }
@@ -167,11 +169,11 @@ impl Bcm2835Timer {
     /// # Safety
     ///
     /// Timer registers must be properly mapped.
-    pub const unsafe fn new(base: usize) -> Self {
+    pub const unsafe fn new(base: usize) -> Result<Self, Bcm2835TimerError> {
         if base != TIMER_BASE {
-            panic!("Invalid base address for BCM2835 timer");
+            return Err(Bcm2835TimerError::InvalidBaseAddress);
         }
-        Self
+        Ok(Self)
     }
 }
 
