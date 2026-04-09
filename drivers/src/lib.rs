@@ -35,5 +35,6 @@
 extern crate alloc;
 pub mod device_manager;
 pub mod hal;
+pub mod io;
 pub mod peripheral;
 pub mod platform;

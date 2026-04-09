@@ -55,13 +55,6 @@ pub fn register_standard_pc_devices() {
         irq: None,
     });
 
-    // Conservative fallback memory map (Multiboot2 overrides this with
-    // precise values when available).
-    PlatformBuilder::add_ram_region(
-        0x0010_0000,       // start at 1 MB — skip low memory / BIOS area
-        127 * 1024 * 1024, // assume 128 MB total
-    );
-
     // ISA hole + VGA frame buffer: mark as MMIO so the allocator never
     // touches this range.
     PlatformBuilder::add_mmio_region(0x000A_0000, 0x0006_0000);

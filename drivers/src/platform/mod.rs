@@ -184,11 +184,10 @@ impl Platform {
                     "16550a-uart" | "ns16550a" => {
                         #[cfg(target_arch = "x86")]
                         let uart =
-                            x86::uart16550::Uart16550::<x86::uart16550::Pio>::new(device.base_addr);
+                            x86::uart16550::Uart16550::<crate::io::Pio>::new(device.base_addr);
                         #[cfg(not(target_arch = "x86"))]
-                        let uart = x86::uart16550::Uart16550::<x86::uart16550::Mmio>::new(
-                            device.base_addr,
-                        );
+                        let uart =
+                            x86::uart16550::Uart16550::<crate::io::Mmio>::new(device.base_addr);
                         device_mgr.register_serial(device.name, uart)?;
                     }
 

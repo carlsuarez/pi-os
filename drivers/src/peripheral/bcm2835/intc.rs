@@ -141,9 +141,7 @@ impl From<Bcm2835IntcError> for InterruptError {
 
 /// BCM2835 interrupt controller.
 #[derive(Debug)]
-pub struct Bcm2835InterruptController {
-    base: usize,
-}
+pub struct Bcm2835InterruptController;
 
 impl Bcm2835InterruptController {
     /// Create a new interrupt controller.
@@ -152,7 +150,10 @@ impl Bcm2835InterruptController {
     ///
     /// Interrupt controller registers must be properly mapped.
     pub const unsafe fn new(base: usize) -> Self {
-        Self { base }
+        if base != INT_CONTROLLER_BASE {
+            panic!("Invalid base address for BCM2835 interrupt controller");
+        }
+        Self {}
     }
 
     /// Validate IRQ number (BCM2835 supports IRQs 0-79)

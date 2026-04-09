@@ -1,51 +1,9 @@
 use crate::hal::serial::{
     DataBits, NonBlockingSerial, Parity, SerialConfig, SerialError, SerialPort, StopBits,
 };
+use crate::io::Io;
 use core::marker::PhantomData;
 use core::ptr::{read_volatile, write_volatile};
-
-// ============================================================================
-// I/O Abstraction
-// ============================================================================
-
-pub trait Io {
-    fn read8(addr: usize) -> u8;
-    fn write8(addr: usize, val: u8);
-}
-
-// ---------------- MMIO (portable) ----------------
-
-pub struct Mmio;
-
-impl Io for Mmio {
-    #[inline]
-    fn read8(addr: usize) -> u8 {
-        unsafe { read_volatile(addr as *const u8) }
-    }
-
-    #[inline]
-    fn write8(addr: usize, val: u8) {
-        unsafe { write_volatile(addr as *mut u8, val) }
-    }
-}
-
-// ---------------- PIO (x86 only) ----------------
-
-#[cfg(target_arch = "x86")]
-pub struct Pio;
-
-#[cfg(target_arch = "x86")]
-impl Io for Pio {
-    #[inline]
-    fn read8(addr: usize) -> u8 {
-        unsafe { x86::io::inb(addr as u16) }
-    }
-
-    #[inline]
-    fn write8(addr: usize, val: u8) {
-        unsafe { x86::io::outb(addr as u16, val) }
-    }
-}
 
 // ============================================================================
 // Constants
