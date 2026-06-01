@@ -77,7 +77,7 @@ pub trait DynTimer: Send + Sync {
 
 impl<T> DynTimer for T
 where
-    T: Timer,
+    T: Timer + 'static,
     usize: Into<T::Handle>,
 {
     fn start(&mut self, handle: usize, interval_us: u32) -> Result<(), TimerError> {
@@ -114,7 +114,7 @@ pub trait DynCountingTimer: DynTimer {
 
 impl<T> DynCountingTimer for T
 where
-    T: CountingTimer,
+    T: CountingTimer + 'static,
     usize: Into<T::Handle>,
 {
     fn now_us(&self) -> u64 {
@@ -130,7 +130,7 @@ pub trait DynPeriodicTimer: DynTimer {
 
 impl<T> DynPeriodicTimer for T
 where
-    T: PeriodicTimer,
+    T: PeriodicTimer + 'static,
     usize: Into<T::Handle>,
 {
     fn start_periodic(&mut self, handle: usize, interval_us: u32) -> Result<(), TimerError> {

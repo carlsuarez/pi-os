@@ -39,31 +39,32 @@ pub extern "C" fn kernel_main() -> ! {
     log::info!("Booting {} kernel", Platform::name());
     print_devices();
 
-    // Draw something
-    if let Some(fb_dev) = crate::subsystems::device_manager()
-        .lock()
-        .get("framebuffer")
-    {
-        use drivers::device_manager::Device;
-        if let Device::FrameBuffer(fb) = fb_dev {
-            let mut fb = fb.lock();
+    // Register a simple timer handler for IRQ0 to verify interrupts work.
+    // The handler writes a cycling character to VGA position 0 so you can
+    // see it tick visually in QEMU without needing a serial console.
+    crate::irq::handlers::register(0, |_tf| {
+        static mut TICK: u8 = 0;
+        unsafe {
+            TICK = TICK.wrapping_add(1);
+            let ch = b'0' + (TICK % 10);
+            log::info!("Timer tick: {}", ch as char);
+        }
+    });
 
-            // Clear to dark blue
-            fb.clear(0x00001A);
+    // Unmask IRQ0 (PIT timer) at the PIC.
+    if let Some(irqctl) = crate::subsystems::irq_controller() {
+        let _ = irqctl.lock().enable(0);
+    }
 
-            // White rectangle in the center
-            let cx = (fb.width() / 2 - 50) as u32;
-            let cy = (fb.height() / 2 - 50) as u32;
-            fb.draw_rect(cx, cy, 100, 100, 0xFFFFFF);
+    // Enable CPU interrupts — IDT is loaded, PIC is configured, handlers registered.
+    Irq::enable();
 
-            let width = fb.width() as u32;
-            let height = fb.height() as u32;
-
-            // Red horizontal line
-            fb.draw_hline(0, width - 1, height / 2, 0xFF0000);
-
-            // Green vertical line
-            fb.draw_vline(width / 2, 0, height - 1, 0x00FF00);
+    // Start the timer
+    if let Some(timer) = crate::subsystems::system_timer_caps() {
+        if let Some(periodic) = timer.periodic {
+            periodic.lock().start_periodic(0, 1000).unwrap();
+        } else {
+            timer.base.lock().start(0, 1000).unwrap();
         }
     }
 
@@ -75,7 +76,9 @@ pub extern "C" fn kernel_main() -> ! {
 // ============================================================================
 
 fn kernel_main_loop() -> ! {
-    loop {}
+    loop {
+        Irq::wait_for_interrupt();
+    }
 }
 
 // ============================================================================

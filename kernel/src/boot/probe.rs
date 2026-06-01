@@ -5,7 +5,7 @@
 //! devices (serial, PIT, PIC, VGA text) that are always present on a
 //! PC regardless of what GRUB reported.
 
-use drivers::platform::{Architecture, DeviceInfo, PlatformBuilder};
+use drivers::platform::{Architecture, DeviceInfo, Platform};
 
 // x86
 
@@ -23,7 +23,7 @@ pub unsafe fn x86() -> Result<(), &'static str> {
 /// Called both from the probing path and from the Multiboot2 path (which
 /// may not enumerate these devices in its tags).
 pub fn register_standard_pc_devices() {
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "serial0",
         compatible: "16550a-uart",
         base_addr: 0x3F8,
@@ -31,23 +31,23 @@ pub fn register_standard_pc_devices() {
         irq: Some(4),
     });
 
-    PlatformBuilder::add_device(DeviceInfo {
-        name: "timer",
+    Platform::add_device(DeviceInfo {
+        name: "pit",
         compatible: "i8254-pit",
         base_addr: 0x40,
         size: 4,
         irq: Some(0),
     });
 
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "pic",
         compatible: "i8259-pic",
         base_addr: 0x20,
         size: 2,
-        irq: None,
+        irq: Some(0x28),
     });
 
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "vga",
         compatible: "vga-text",
         base_addr: 0xB8000,
@@ -57,7 +57,7 @@ pub fn register_standard_pc_devices() {
 
     // ISA hole + VGA frame buffer: mark as MMIO so the allocator never
     // touches this range.
-    PlatformBuilder::add_mmio_region(0x000A_0000, 0x0006_0000);
+    Platform::add_mmio_region(0x000A_0000, 0x0006_0000);
 }
 
 // ARM
@@ -91,82 +91,82 @@ unsafe fn read_arm_cpu_id() -> u32 {
 }
 
 fn bcm2835() -> Result<(), &'static str> {
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "uart0",
         compatible: "arm,pl011",
         base_addr: 0x2020_1000,
         size: 0x1000,
         irq: Some(57),
     });
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "timer",
         compatible: "brcm,bcm2835-system-timer",
         base_addr: 0x2000_3000,
         size: 0x1000,
         irq: Some(1),
     });
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "intc",
         compatible: "brcm,bcm2835-armctrl-ic",
         base_addr: 0x2000_B200,
         size: 0x200,
         irq: None,
     });
-    PlatformBuilder::add_ram_region(0x0000_0000, 512 * 1024 * 1024);
-    PlatformBuilder::add_mmio_region(0x2000_0000, 0x0100_0000);
+    Platform::add_ram_region(0x0000_0000, 512 * 1024 * 1024);
+    Platform::add_mmio_region(0x2000_0000, 0x0100_0000);
     Ok(())
 }
 
 fn bcm2836() -> Result<(), &'static str> {
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "uart0",
         compatible: "arm,pl011",
         base_addr: 0x3F20_1000,
         size: 0x1000,
         irq: Some(57),
     });
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "timer",
         compatible: "arm,armv7-timer",
         base_addr: 0,
         size: 0,
         irq: Some(30),
     });
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "intc",
         compatible: "brcm,bcm2835-armctrl-ic",
         base_addr: 0x3F00_B200,
         size: 0x200,
         irq: None,
     });
-    PlatformBuilder::add_ram_region(0x0000_0000, 1024 * 1024 * 1024);
-    PlatformBuilder::add_mmio_region(0x3F00_0000, 0x0100_0000);
+    Platform::add_ram_region(0x0000_0000, 1024 * 1024 * 1024);
+    Platform::add_mmio_region(0x3F00_0000, 0x0100_0000);
     Ok(())
 }
 
 fn bcm2837() -> Result<(), &'static str> {
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "uart0",
         compatible: "arm,pl011",
         base_addr: 0x3F20_1000,
         size: 0x1000,
         irq: Some(57),
     });
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "timer",
         compatible: "arm,armv8-timer",
         base_addr: 0,
         size: 0,
         irq: Some(30),
     });
-    PlatformBuilder::add_device(DeviceInfo {
+    Platform::add_device(DeviceInfo {
         name: "intc",
         compatible: "brcm,bcm2835-armctrl-ic",
         base_addr: 0x3F00_B200,
         size: 0x200,
         irq: None,
     });
-    PlatformBuilder::add_ram_region(0x0000_0000, 1024 * 1024 * 1024);
-    PlatformBuilder::add_mmio_region(0x3F00_0000, 0x0100_0000); // same window as BCM2836
+    Platform::add_ram_region(0x0000_0000, 1024 * 1024 * 1024);
+    Platform::add_mmio_region(0x3F00_0000, 0x0100_0000); // same window as BCM2836
     Ok(())
 }

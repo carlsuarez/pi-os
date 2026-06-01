@@ -1,21 +1,7 @@
-//! Platform Abstraction Layer — read-only query API.
-//!
-//! This module exposes the hardware inventory that the boot layer
-//! (`kernel::boot`) discovered and wrote via [`PlatformBuilder`].
-//! Drivers and the rest of the kernel only ever *read* from here.
-//!
-//! # Crate boundary
-//!
-//! `drivers` → read-only ([`Platform`], [`DeviceInfo`], [`MemoryRegion`], …)
-//! `kernel`  → write side ([`PlatformBuilder`]) + all boot/parse logic
-
-pub mod builder;
-
+use alloc::{format, string::String};
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use alloc::{format, string::String};
-// Re-export
-pub use builder::PlatformBuilder;
+use crate::device_manager::*;
 
 //  Public types
 
@@ -61,7 +47,7 @@ pub struct MemoryMap {
     pub peripheral_size: usize,
 }
 
-//  Static storage (written once by PlatformBuilder, read-only after)
+//  Static storage (written oncer, read-only after)
 
 pub(crate) const MAX_DEVICES: usize = 32;
 pub(crate) const MAX_MEMORY_REGIONS: usize = 64;
@@ -87,6 +73,36 @@ pub(crate) static INITIALIZED: AtomicBool = AtomicBool::new(false);
 pub struct Platform;
 
 impl Platform {
+    /// Mark the platform as initialized.
+    ///
+    /// Returns `Err` if called more than once.
+    pub fn begin() -> Result<(), &'static str> {
+        if INITIALIZED.swap(true, Ordering::SeqCst) {
+            return Err("Platform already initialized");
+        }
+        Ok(())
+    }
+
+    // Getters and setters
+
+    pub fn set_arch(arch: Architecture) {
+        unsafe {
+            ARCH = arch;
+        }
+    }
+
+    pub fn set_platform_name(name: &'static str) {
+        unsafe {
+            PLATFORM_NAME = name;
+        }
+    }
+
+    pub fn set_cmdline(cmdline: &'static str) {
+        unsafe {
+            CMDLINE = Some(cmdline);
+        }
+    }
+
     pub fn name() -> &'static str {
         unsafe { PLATFORM_NAME }
     }
@@ -102,6 +118,48 @@ impl Platform {
 
     pub fn cmdline() -> Option<&'static str> {
         unsafe { CMDLINE }
+    }
+
+    /// Add a discovered device to the platform device table.
+    ///
+    /// Silently drops entries beyond [`MAX_DEVICES`].
+    pub fn add_device(device: DeviceInfo) {
+        unsafe {
+            if DEVICE_COUNT < MAX_DEVICES {
+                DEVICES[DEVICE_COUNT] = Some(device);
+                DEVICE_COUNT += 1;
+            }
+        }
+    }
+
+    /// Add a discovered memory region to the platform memory map.
+    ///
+    /// Silently drops entries beyond [`MAX_MEMORY_REGIONS`].
+    pub fn add_memory_region(region: MemoryRegion) {
+        unsafe {
+            if MEMORY_REGION_COUNT < MAX_MEMORY_REGIONS {
+                MEMORY_REGIONS[MEMORY_REGION_COUNT] = region;
+                MEMORY_REGION_COUNT += 1;
+            }
+        }
+    }
+
+    /// Convenience: add an MMIO-typed region.
+    pub fn add_mmio_region(base: usize, size: usize) {
+        Self::add_memory_region(MemoryRegion {
+            base,
+            size,
+            mem_type: MemoryType::Mmio,
+        });
+    }
+
+    /// Convenience: add an Available RAM region.
+    pub fn add_ram_region(base: usize, size: usize) {
+        Self::add_memory_region(MemoryRegion {
+            base,
+            size,
+            mem_type: MemoryType::Available,
+        });
     }
 
     pub fn memory_regions() -> &'static [MemoryRegion] {
@@ -164,7 +222,7 @@ impl Platform {
     /// Initialize and register all platform devices with the device manager.
     ///
     /// # Safety
-    /// Must be called after `PlatformBuilder::begin()` and after memory
+    /// Must be called after `Platform::begin()` and after memory
     /// management is initialized.
     pub unsafe fn init_devices(
         device_mgr: &mut crate::device_manager::DeviceManager,
@@ -178,7 +236,7 @@ impl Platform {
                     //  UART
                     "arm,pl011" | "arm,primecell" => {
                         let uart = arm::pl011::Pl011::new(device.base_addr);
-                        device_mgr.register_serial(device.name, uart)?;
+                        device_mgr.register(device.name, WithNonBlocking(uart));
                     }
 
                     "16550a-uart" | "ns16550a" => {
@@ -188,25 +246,34 @@ impl Platform {
                         #[cfg(not(target_arch = "x86"))]
                         let uart =
                             x86::uart16550::Uart16550::<crate::io::Mmio>::new(device.base_addr);
-                        device_mgr.register_serial(device.name, uart)?;
+                        device_mgr.register(device.name, WithNonBlocking(uart));
                     }
 
                     //  Timers
                     "brcm,bcm2835-system-timer" => {
                         let timer = bcm2835::timer::Bcm2835Timer::new(device.base_addr)
                             .map_err(|e| format!("Timer init failed: {:?}", e))?;
-                        device_mgr.register_timer(device.name, timer, Some(1))?;
+                        device_mgr.register(device.name, WithCounting(timer));
                     }
                     "arm,armv7-timer" | "arm,armv8-timer" => {}
-                    "i8254-pit" | "intel,8254" => {}
+                    "i8254-pit" | "intel,8254" => {
+                        let timer = x86::i8254_pit::I8254PIT::new();
+                        device_mgr.register(device.name, WithCountingPeriodic(timer));
+                    }
 
                     //  Interrupt controllers
                     "brcm,bcm2835-armctrl-ic" | "brcm,bcm2836-armctrl-ic" => {
                         let intc = bcm2835::intc::Bcm2835InterruptController::new(device.base_addr);
-                        device_mgr.register_interrupt_controller(device.name, intc)?;
+                        device_mgr.register(device.name, InterruptControllerOnly(intc));
                     }
                     "arm,gic-400" | "arm,cortex-a15-gic" | "arm,gic-v3" => {}
-                    "i8259-pic" | "intel,8259" => {}
+                    "i8259-pic" | "intel,8259" => {
+                        let intc = x86::pic8259::Pic8259::new(
+                            device.base_addr as u8,
+                            device.irq.unwrap_or(0) as u8,
+                        );
+                        device_mgr.register(device.name, InterruptControllerOnly(intc));
+                    }
 
                     //  Framebuffer
                     "multiboot2-fb" | "simple-framebuffer" => {
@@ -217,7 +284,7 @@ impl Platform {
                     "brcm,bcm2835-sdhost" | "brcm,bcm2711-emmc2" => {
                         let block_dev = bcm2835::emmc::Emmc::new(device.base_addr)
                             .map_err(|e| format!("Emmc init failed: {:?}", e))?;
-                        device_mgr.register_block(device.name, block_dev)?;
+                        device_mgr.register(device.name, WithBlockId(block_dev));
                     }
 
                     //  Consoles

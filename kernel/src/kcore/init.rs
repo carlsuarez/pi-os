@@ -36,21 +36,26 @@ pub extern "C" fn kernel_init(machine_type: u32, atags_addr: u32) {
 
         logger::init(log::LevelFilter::Info);
 
+        // Set up our own GDT and load the IDT with exception/IRQ stubs.
+        // Interrupts remain off (no sti) until kernel_main is ready.
+        #[cfg(target_arch = "x86")]
+        crate::arch::x86::arch_init();
+
         let layout = setup_memory_management();
 
         crate::subsystems::init_devices();
 
-        // #[cfg(target_arch = "arm")]
-        // {
-        //     let l1_phys = KERNEL_L1_TABLE_PHYS.load(Ordering::Relaxed);
-        //     PlatformMmu::init(l1_phys);
-        // }
+        #[cfg(target_arch = "arm")]
+        {
+            let l1_phys = KERNEL_L1_TABLE_PHYS.load(Ordering::Relaxed);
+            PlatformMmu::init(l1_phys);
+        }
 
-        // #[cfg(target_arch = "x86")]
-        // {
-        //     let pd_phys = KERNEL_PD_PHYS.load(Ordering::Relaxed);
-        //     PlatformMmu::init(pd_phys);
-        // }
+        #[cfg(target_arch = "x86")]
+        {
+            let pd_phys = KERNEL_PD_PHYS.load(Ordering::Relaxed);
+            PlatformMmu::init(pd_phys);
+        }
 
         log::info!("Kernel Early Initialization Complete\n");
 

@@ -55,6 +55,10 @@ pub fn system_timer() -> Option<Arc<Mutex<dyn DynTimer>>> {
     device_manager().lock().system_timer()
 }
 
+pub fn system_timer_caps() -> Option<drivers::device_manager::TimerCapabilities> {
+    device_manager().lock().system_timer_caps()
+}
+
 pub fn irq_controller() -> Option<Arc<Mutex<dyn DynInterruptController>>> {
     device_manager().lock().irq_controller()
 }
@@ -111,6 +115,6 @@ pub fn enable_graphical_framebuffer() -> Result<(), String> {
         unsafe { Mb2Fb::new(*tag) }.map_err(|e| format!("Framebuffer init failed: {:?}", e))?;
     crate::subsystems::device_manager()
         .lock()
-        .register_framebuffer("framebuffer", fb)?;
+        .register("framebuffer", fb);
     Ok(())
 }

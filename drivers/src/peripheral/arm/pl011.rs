@@ -100,6 +100,7 @@ impl From<PL011Error> for SerialError {
 // ============================================================================
 
 /// PL011 UART driver.
+#[derive(Clone, Copy)]
 pub struct PL011 {
     base: usize,
 }

@@ -192,21 +192,19 @@ impl MmuOps for X86Mmu {
                 options(nostack, preserves_flags)
             );
 
-            // Identity-map first 4 MB via 4 MB PS PDE — covers the kernel at 1MB
-            // and the PT pool which lives in BSS just after the kernel image.
-            // With a debug build at ~4.4MB we need more than one 4MB PDE.
-
-            // Map 0x00000000 - 0x00400000 (first 4MB)
-            let pde0: u32 = 0x0000_0000 | X86_PS | X86_WRITABLE | X86_PRESENT;
-            ptr::write_volatile(pd.add(0), pde0);
-
-            // Map 0x00400000 - 0x00800000 (second 4MB) — covers BSS/PT_POOL
-            // for debug builds where the kernel + pool exceeds 4MB
-            let pde1: u32 = 0x0040_0000 | X86_PS | X86_WRITABLE | X86_PRESENT;
-            ptr::write_volatile(pd.add(1), pde1);
-
-            // Map VGA buffer at 0xB8000 — falls in first 4MB, already covered
-            // by pde0. No extra mapping needed.
+            // Identity-map all of available RAM (rounded up to 4 MB) using
+            // 4 MB PS PDEs. Covers the kernel image, BSS, PD/PT pool, heap,
+            // page allocator, and VGA text buffer (in first 4 MB).
+            //
+            // Without this, anything past the mapped range faults the moment
+            // paging is enabled (e.g. heap allocations during init logging).
+            let mm = drivers::platform::Platform::memory_map();
+            let ram_end = mm.ram_start + mm.ram_size;
+            let last_pde = (ram_end + (1 << 22) - 1) >> 22; // ceil(ram_end / 4MB)
+            for i in 0..last_pde {
+                let pde: u32 = ((i as u32) << 22) | X86_PS | X86_WRITABLE | X86_PRESENT;
+                ptr::write_volatile(pd.add(i), pde);
+            }
 
             write_cr3(l1_phys as u32);
             enable_paging();

@@ -1,9 +1,8 @@
 //! Device tree (FDT/DTB) platform discovery.
 //!
-//! Currently a stub.  Enable the `device-tree` feature and add the
-//! `fdt` crate dependency to `kernel/Cargo.toml` to activate.
+//! Currently a stub.
 
-#[cfg(feature = "device-tree")]
+#[cfg(target_arch = "arm")]
 use drivers::platform::{DeviceInfo, MemoryRegion, MemoryType, PlatformBuilder};
 
 /// Walk a Flattened Device Tree and populate the platform tables.
@@ -11,7 +10,7 @@ use drivers::platform::{DeviceInfo, MemoryRegion, MemoryType, PlatformBuilder};
 /// # Safety
 /// `dtb_addr` must be the physical/identity-mapped base of a valid FDT blob.
 pub unsafe fn discover(_dtb_addr: usize) -> Result<(), &'static str> {
-    #[cfg(feature = "device-tree")]
+    #[cfg(target_arch = "arm")]
     {
         use fdt::Fdt;
 
@@ -48,6 +47,6 @@ pub unsafe fn discover(_dtb_addr: usize) -> Result<(), &'static str> {
         return Ok(());
     }
 
-    #[cfg(not(feature = "device-tree"))]
+    #[cfg(not(target_arch = "arm"))]
     Err("device tree support not enabled")
 }

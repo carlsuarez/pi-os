@@ -7,7 +7,7 @@
 //! to consume during device init.
 
 use drivers::peripheral::x86::mb2fb::{ChannelDesc, Mb2FbTag, parse_mb2_fb_tag, set_mb2_fb_tag};
-use drivers::platform::{DeviceInfo, MemoryRegion, MemoryType, PlatformBuilder};
+use drivers::platform::{DeviceInfo, MemoryRegion, MemoryType, Platform};
 
 const MB2_MAGIC: u32 = 0x36d7_6289;
 
@@ -64,7 +64,7 @@ unsafe fn parse_cmdline(tag_addr: usize) {
             len += 1;
         }
         if let Ok(s) = core::str::from_utf8(core::slice::from_raw_parts(ptr, len)) {
-            PlatformBuilder::set_cmdline(s);
+            Platform::set_cmdline(s);
         }
     }
 }
@@ -92,7 +92,7 @@ unsafe fn parse_memory_map(tag_addr: usize) -> Result<(), &'static str> {
                 _ => MemoryType::Reserved,
             };
 
-            PlatformBuilder::add_memory_region(MemoryRegion {
+            Platform::add_memory_region(MemoryRegion {
                 base,
                 size: length,
                 mem_type,
@@ -108,7 +108,7 @@ unsafe fn parse_framebuffer(tag_addr: usize) {
         let tag = parse_mb2_fb_tag((tag_addr + 8) as *const u8);
         set_mb2_fb_tag(tag);
 
-        PlatformBuilder::add_device(DeviceInfo {
+        Platform::add_device(DeviceInfo {
             name: "framebuffer",
             compatible: "multiboot2-fb",
             base_addr: tag.addr as usize,

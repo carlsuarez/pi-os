@@ -15,7 +15,7 @@ pub mod device_tree;
 pub mod multiboot2;
 pub mod probe;
 
-use drivers::platform::{Architecture, PlatformBuilder};
+use drivers::platform::{Architecture, Platform};
 
 /// Boot information passed in from the arch-specific entry point.
 #[derive(Debug)]
@@ -37,10 +37,10 @@ pub enum BootInfo {
 /// Must be called exactly once, very early in boot before memory
 /// management is initialized.
 pub unsafe fn init(boot_info: BootInfo) -> Result<(), &'static str> {
-    PlatformBuilder::begin()?;
+    Platform::begin()?;
 
     let arch = detect_architecture();
-    PlatformBuilder::set_arch(arch);
+    Platform::set_arch(arch);
 
     let discovered = match boot_info {
         BootInfo::Multiboot2 { magic, info_addr } => unsafe {
@@ -64,7 +64,7 @@ pub unsafe fn init(boot_info: BootInfo) -> Result<(), &'static str> {
         }
     }
 
-    PlatformBuilder::set_platform_name(determine_platform_name());
+    Platform::set_platform_name(determine_platform_name());
     Ok(())
 }
 

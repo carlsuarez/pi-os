@@ -9,9 +9,3 @@ common = { path = "../common" }
 log = "0.4.29"
 spin = "0.10.0"
 x86 = "0.52.0"
-
-[features]
-default = ["bcm2835"]
-bcm2835 = []
-bcm2711 = []
-pc = []
